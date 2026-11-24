@@ -142,12 +142,13 @@
 
           <div>
             <label class="block text-sm font-medium mb-1">
-              Photos, Audio Notes, or Short Videos (Max 5 files, 25 MB each)
+              Photos, Audio Notes, or Short Videos (Add one by one or together, max 5 files, 25 MB each)
             </label>
             <input type="file" id="media_files" multiple
               accept="image/jpeg,image/png,image/webp,video/mp4,video/webm,video/quicktime,audio/mpeg,audio/mp4,audio/webm,audio/ogg,audio/wav"
               class="block w-full text-sm text-slate-600 file:mr-4 file:py-2 file:px-4 file:rounded-lg file:border-0 file:text-sm file:font-semibold file:bg-blue-50 file:text-blue-700 hover:file:bg-blue-100" />
             <p id="file-summary" class="text-xs text-slate-500 mt-1">No files selected.</p>
+            <div id="queued-files-list" class="mt-2 space-y-1.5"></div>
           </div>
 
           <div id="submit-error" class="hidden text-sm text-red-600 bg-red-50 border border-red-200 rounded-lg p-3"></div>
@@ -180,14 +181,17 @@
   </div>
 
   <script>
-    const SUPABASE_URL = "https://dmbkfmtzlckgykdjyouw.supabase.co";
-    const SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImRtYmtmbXR6bGNrZ3lrZGp5b3V3Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3OTU0OTE2NjMsImV4cCI6MjExMTA2NzY2M30.TeLo14UrxSpTEW2yRhvOakBqzfl2qza4JeHj3n3ajMU";
+    const SUPABASE_URL = "YOUR_SUPABASE_URL";
+    const SUPABASE_ANON_KEY = "YOUR_SUPABASE_ANON_KEY";
     const db = window.supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
 
     let currentUser = null;
+    let selectedFiles = [];
 
     const MAX_FILES = 5;
     const MAX_BYTES = 25 * 1024 * 1024;
+    const MAX_IMAGE_DIM = 1280;
+    const IMAGE_QUALITY = 0.75;
     const ALLOWED_TYPES = new Set([
       "image/jpeg", "image/png", "image/webp",
       "video/mp4", "video/webm", "video/quicktime",
@@ -327,7 +331,7 @@
       }
     });
 
-    // File validation
+    // File validation, queue rendering, and image compression
     const fileInput = document.getElementById("media_files");
     const fileSummary = document.getElementById("file-summary");
     const errorBox = document.getElementById("submit-error");
@@ -352,82 +356,111 @@
       return null;
     }
 
-    const MAX_IMAGE_DIM = 1280;
-const IMAGE_QUALITY = 0.75;
-
-function compressImageFile(file) {
-  return new Promise((resolve) => {
-    if (!file.type.startsWith("image/")) {
-      return resolve(file);
-    }
-
-    const img = new Image();
-    const objectUrl = URL.createObjectURL(file);
-
-    img.onload = () => {
-      URL.revokeObjectURL(objectUrl);
-
-      let { width, height } = img;
-      if (width > MAX_IMAGE_DIM || height > MAX_IMAGE_DIM) {
-        if (width >= height) {
-          height = Math.round((height * MAX_IMAGE_DIM) / width);
-          width = MAX_IMAGE_DIM;
-        } else {
-          width = Math.round((width * MAX_IMAGE_DIM) / height);
-          height = MAX_IMAGE_DIM;
-        }
+    function renderQueuedFiles() {
+      const listEl = document.getElementById("queued-files-list");
+      if (!selectedFiles.length) {
+        fileSummary.textContent = "No files selected.";
+        listEl.innerHTML = "";
+        return;
       }
 
-      const canvas = document.createElement("canvas");
-      canvas.width = width;
-      canvas.height = height;
+      const totalMB = (selectedFiles.reduce((acc, f) => acc + f.size, 0) / (1024 * 1024)).toFixed(1);
+      fileSummary.textContent = `${selectedFiles.length} of ${MAX_FILES} file(s) queued (${totalMB} MB total).`;
 
-      const ctx = canvas.getContext("2d");
-      ctx.drawImage(img, 0, 0, width, height);
+      listEl.innerHTML = selectedFiles
+        .map(
+          (f, idx) => `
+          <div class="flex items-center justify-between text-xs bg-slate-50 border border-slate-200 rounded-lg px-3 py-1.5">
+            <span class="truncate pr-2">${f.name} (${(f.size / (1024 * 1024)).toFixed(1)} MB)</span>
+            <button type="button" data-remove-idx="${idx}" class="text-red-600 font-semibold hover:underline shrink-0">
+              Remove
+            </button>
+          </div>
+        `
+        )
+        .join("");
 
-      canvas.toBlob(
-        (blob) => {
-          if (!blob || blob.size >= file.size) {
-            return resolve(file);
-          }
-          const baseName = file.name.replace(/\.[^.]+$/, "");
-          const compressed = new File([blob], `${baseName}.jpg`, {
-            type: "image/jpeg",
-            lastModified: Date.now()
-          });
-          resolve(compressed);
-        },
-        "image/jpeg",
-        IMAGE_QUALITY
-      );
-    };
-
-    img.onerror = () => {
-      URL.revokeObjectURL(objectUrl);
-      resolve(file);
-    };
-
-    img.src = objectUrl;
-  });
-}
+      listEl.querySelectorAll("[data-remove-idx]").forEach((btn) => {
+        btn.addEventListener("click", () => {
+          const idx = Number(btn.getAttribute("data-remove-idx"));
+          selectedFiles.splice(idx, 1);
+          renderQueuedFiles();
+        });
+      });
+    }
 
     fileInput.addEventListener("change", () => {
       clearError();
-      const files = Array.from(fileInput.files);
-      if (!files.length) {
-        fileSummary.textContent = "No files selected.";
-        return;
-      }
-      const err = validateFiles(files);
+      const newlyPicked = Array.from(fileInput.files);
+      fileInput.value = "";
+
+      if (!newlyPicked.length) return;
+
+      const combined = [...selectedFiles, ...newlyPicked];
+      const err = validateFiles(combined);
       if (err) {
-        showError(err);
-        fileInput.value = "";
-        fileSummary.textContent = "No files selected.";
-        return;
+        return showError(err);
       }
-      const totalMB = (files.reduce((acc, f) => acc + f.size, 0) / (1024 * 1024)).toFixed(1);
-      fileSummary.textContent = `${files.length} file(s) selected (${totalMB} MB total).`;
+
+      selectedFiles = combined;
+      renderQueuedFiles();
     });
+
+    function compressImageFile(file) {
+      return new Promise((resolve) => {
+        if (!file.type.startsWith("image/")) {
+          return resolve(file);
+        }
+
+        const img = new Image();
+        const objectUrl = URL.createObjectURL(file);
+
+        img.onload = () => {
+          URL.revokeObjectURL(objectUrl);
+
+          let { width, height } = img;
+          if (width > MAX_IMAGE_DIM || height > MAX_IMAGE_DIM) {
+            if (width >= height) {
+              height = Math.round((height * MAX_IMAGE_DIM) / width);
+              width = MAX_IMAGE_DIM;
+            } else {
+              width = Math.round((width * MAX_IMAGE_DIM) / height);
+              height = MAX_IMAGE_DIM;
+            }
+          }
+
+          const canvas = document.createElement("canvas");
+          canvas.width = width;
+          canvas.height = height;
+
+          const ctx = canvas.getContext("2d");
+          ctx.drawImage(img, 0, 0, width, height);
+
+          canvas.toBlob(
+            (blob) => {
+              if (!blob || blob.size >= file.size) {
+                return resolve(file);
+              }
+              const baseName = file.name.replace(/\.[^.]+$/, "");
+              const compressed = new File([blob], `${baseName}.jpg`, {
+                type: "image/jpeg",
+                lastModified: Date.now()
+              });
+              resolve(compressed);
+            },
+            "image/jpeg",
+            IMAGE_QUALITY
+          );
+        };
+
+        img.onerror = () => {
+          URL.revokeObjectURL(objectUrl);
+          resolve(file);
+        };
+
+        img.src = objectUrl;
+      });
+    }
 
     // Submit repair ticket
     const repairForm = document.getElementById("repair-form");
@@ -443,7 +476,7 @@ function compressImageFile(file) {
       const deviceType = document.getElementById("device_type").value;
       const deviceModel = document.getElementById("device_model").value.trim();
       const issueDesc = document.getElementById("issue_description").value.trim();
-      const files = Array.from(fileInput.files);
+      const files = [...selectedFiles];
 
       if (!/^01[3-9]\d{8}$/.test(phoneClean)) {
         return showError("Enter a valid 11-digit Bangladeshi mobile number (e.g., 01712345678).");
@@ -472,19 +505,19 @@ function compressImageFile(file) {
         if (insertErr) throw insertErr;
 
         const uploadedPaths = [];
-for (let i = 0; i < files.length; i++) {
-  const preparedFile = await compressImageFile(files[i]);
-  const safeName = preparedFile.name.replace(/[^a-zA-Z0-9._-]/g, "_");
-  const storagePath = `${currentUser.id}/${ticket.ticket_code}/${Date.now()}_${i}_${safeName}`;
+        for (let i = 0; i < files.length; i++) {
+          const preparedFile = await compressImageFile(files[i]);
+          const safeName = preparedFile.name.replace(/[^a-zA-Z0-9._-]/g, "_");
+          const storagePath = `${currentUser.id}/${ticket.ticket_code}/${Date.now()}_${i}_${safeName}`;
 
-  const { error: upErr } = await db.storage
-    .from("repair-media")
-    .upload(storagePath, preparedFile, { contentType: preparedFile.type, upsert: false });
+          const { error: upErr } = await db.storage
+            .from("repair-media")
+            .upload(storagePath, preparedFile, { contentType: preparedFile.type, upsert: false });
 
-  if (!upErr) {
-    uploadedPaths.push({ path: storagePath, type: preparedFile.type, name: preparedFile.name });
-  }
-}
+          if (!upErr) {
+            uploadedPaths.push({ path: storagePath, type: preparedFile.type, name: preparedFile.name });
+          }
+        }
 
         if (uploadedPaths.length > 0) {
           await db.from("tickets").update({ media_paths: uploadedPaths }).eq("id", ticket.id);
@@ -500,8 +533,8 @@ for (let i = 0; i < files.length; i++) {
         document.getElementById("device_type").value = "";
         document.getElementById("device_model").value = "";
         document.getElementById("issue_description").value = "";
-        fileInput.value = "";
-        fileSummary.textContent = "No files selected.";
+        selectedFiles = [];
+        renderQueuedFiles();
       } catch (err) {
         showError(err.message || "Could not submit your request. Please try again.");
       } finally {
