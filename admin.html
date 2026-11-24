@@ -96,8 +96,22 @@
     document.getElementById("refresh-btn").addEventListener("click", loadTickets);
     document.getElementById("status-filter").addEventListener("change", loadTickets);
 
-    db.auth.onAuthStateChange((_event, session) => {
+    db.auth.onAuthStateChange(async (_event, session) => {
       if (session?.user) {
+        const { data: profile } = await db
+          .from("profiles")
+          .select("role")
+          .eq("id", session.user.id)
+          .single();
+
+        if (profile?.role !== "technician") {
+          await db.auth.signOut();
+          const errEl = document.getElementById("login-error");
+          errEl.textContent = "Access denied: Technician privileges required.";
+          errEl.classList.remove("hidden");
+          return;
+        }
+
         loginView.classList.add("hidden");
         dashboardView.classList.remove("hidden");
         document.getElementById("tech-user-email").textContent = `Signed in as ${session.user.email}`;
