@@ -1,1 +1,319 @@
-<h1>Electronics Repair Intake</h1>
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Electronics Repair Request & Tracker</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+</head>
+<body class="bg-slate-50 text-slate-900 min-h-screen">
+  <div class="max-w-2xl mx-auto px-4 py-8 space-y-8">
+    <header class="text-center space-y-1">
+      <h1 class="text-2xl font-bold tracking-tight">Electronics Repair Center</h1>
+      <p class="text-sm text-slate-600">Submit a repair request with photos, audio, or short clips — or track an existing ticket.</p>
+    </header>
+
+    <!-- Tab Switcher -->
+    <div class="grid grid-cols-2 gap-2 bg-slate-200/80 p-1 rounded-xl">
+      <button id="tab-submit" type="button" class="py-2 text-sm font-semibold rounded-lg bg-white shadow text-slate-900">
+        New Repair Request
+      </button>
+      <button id="tab-track" type="button" class="py-2 text-sm font-semibold rounded-lg text-slate-600 hover:text-slate-900">
+        Track Ticket
+      </button>
+    </div>
+
+    <!-- SUBMIT FORM -->
+    <section id="panel-submit" class="bg-white border border-slate-200 rounded-2xl p-6 shadow-sm space-y-5">
+      <form id="repair-form" class="space-y-4">
+        <div class="grid sm:grid-cols-2 gap-4">
+          <div>
+            <label class="block text-sm font-medium mb-1">Your Name *</label>
+            <input type="text" id="customer_name" required placeholder="Tanvir Ahmed"
+              class="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-600" />
+          </div>
+          <div>
+            <label class="block text-sm font-medium mb-1">Mobile Number (BD) *</label>
+            <input type="tel" id="phone_number" required placeholder="017XXXXXXXX"
+              class="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-600" />
+          </div>
+        </div>
+
+        <div class="grid sm:grid-cols-2 gap-4">
+          <div>
+            <label class="block text-sm font-medium mb-1">Device Type *</label>
+            <select id="device_type" required
+              class="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm bg-white focus:outline-none focus:ring-2 focus:ring-blue-600">
+              <option value="">Select device...</option>
+              <option value="Smartphone">Smartphone</option>
+              <option value="Laptop">Laptop</option>
+              <option value="Audio / Speaker / Earbuds">Audio / Speaker / Earbuds</option>
+              <option value="Home Appliance">Home Appliance</option>
+              <option value="Other Electronics">Other Electronics</option>
+            </select>
+          </div>
+          <div>
+            <label class="block text-sm font-medium mb-1">Brand & Model *</label>
+            <input type="text" id="device_model" required placeholder="e.g., Redmi Note 13 / HP Pavilion"
+              class="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-600" />
+          </div>
+        </div>
+
+        <div>
+          <label class="block text-sm font-medium mb-1">Describe the Fault / Issue *</label>
+          <textarea id="issue_description" rows="4" required
+            placeholder="When did it start? Does it turn on, overheat, make noise, or fail to charge?"
+            class="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-600"></textarea>
+        </div>
+
+        <div>
+          <label class="block text-sm font-medium mb-1">
+            Photos, Audio Notes, or Short Videos (Max 5 files, 25 MB each)
+          </label>
+          <input type="file" id="media_files" multiple
+            accept="image/jpeg,image/png,image/webp,video/mp4,video/webm,video/quicktime,audio/mpeg,audio/mp4,audio/webm,audio/ogg,audio/wav"
+            class="block w-full text-sm text-slate-600 file:mr-4 file:py-2 file:px-4 file:rounded-lg file:border-0 file:text-sm file:font-semibold file:bg-blue-50 file:text-blue-700 hover:file:bg-blue-100" />
+          <p id="file-summary" class="text-xs text-slate-500 mt-1">No files selected.</p>
+        </div>
+
+        <div id="submit-error" class="hidden text-sm text-red-600 bg-red-50 border border-red-200 rounded-lg p-3"></div>
+
+        <button id="submit-btn" type="submit"
+          class="w-full py-2.5 px-4 rounded-xl bg-blue-600 hover:bg-blue-700 disabled:opacity-50 text-white font-semibold text-sm transition">
+          Submit Repair Request
+        </button>
+      </form>
+
+      <div id="ticket-confirmation" class="hidden bg-emerald-50 border border-emerald-200 rounded-xl p-5 space-y-2">
+        <p class="text-sm font-semibold text-emerald-800">Repair Request Submitted!</p>
+        <p class="text-sm text-emerald-900">Save your Ticket ID to track repair progress:</p>
+        <div id="created-ticket-code" class="text-2xl font-mono font-bold text-emerald-950 tracking-wider"></div>
+        <p id="created-ticket-media-note" class="text-xs text-emerald-800"></p>
+      </div>
+    </section>
+
+    <!-- TRACK TICKET -->
+    <section id="panel-track" class="hidden bg-white border border-slate-200 rounded-2xl p-6 shadow-sm space-y-4">
+      <form id="track-form" class="grid sm:grid-cols-3 gap-3">
+        <input type="text" id="track_code" required placeholder="Ticket ID (e.g., REP-1001)"
+          class="rounded-lg border border-slate-300 px-3 py-2 text-sm uppercase focus:outline-none focus:ring-2 focus:ring-blue-600" />
+        <input type="tel" id="track_phone" required placeholder="Mobile (017XXXXXXXX)"
+          class="rounded-lg border border-slate-300 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-600" />
+        <button type="submit"
+          class="rounded-lg bg-slate-900 hover:bg-slate-800 text-white font-semibold text-sm py-2 px-4">
+          Check Status
+        </button>
+      </form>
+      <div id="track-result" class="text-sm text-slate-600"></div>
+    </section>
+  </div>
+
+  <script>
+    const SUPABASE_URL = "YOUR_SUPABASE_URL";
+    const SUPABASE_ANON_KEY = "YOUR_SUPABASE_ANON_KEY";
+    const db = window.supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
+
+    const MAX_FILES = 5;
+    const MAX_BYTES = 25 * 1024 * 1024; // 25 MB
+    const ALLOWED_TYPES = new Set([
+      "image/jpeg", "image/png", "image/webp",
+      "video/mp4", "video/webm", "video/quicktime",
+      "audio/mpeg", "audio/mp4", "audio/webm", "audio/ogg", "audio/wav"
+    ]);
+
+    // Tabs
+    const tabSubmit = document.getElementById("tab-submit");
+    const tabTrack = document.getElementById("tab-track");
+    const panelSubmit = document.getElementById("panel-submit");
+    const panelTrack = document.getElementById("panel-track");
+
+    tabSubmit.addEventListener("click", () => {
+      tabSubmit.className = "py-2 text-sm font-semibold rounded-lg bg-white shadow text-slate-900";
+      tabTrack.className = "py-2 text-sm font-semibold rounded-lg text-slate-600 hover:text-slate-900";
+      panelSubmit.classList.remove("hidden");
+      panelTrack.classList.add("hidden");
+    });
+
+    tabTrack.addEventListener("click", () => {
+      tabTrack.className = "py-2 text-sm font-semibold rounded-lg bg-white shadow text-slate-900";
+      tabSubmit.className = "py-2 text-sm font-semibold rounded-lg text-slate-600 hover:text-slate-900";
+      panelTrack.classList.remove("hidden");
+      panelSubmit.classList.add("hidden");
+    });
+
+    // File validation preview
+    const fileInput = document.getElementById("media_files");
+    const fileSummary = document.getElementById("file-summary");
+    const errorBox = document.getElementById("submit-error");
+
+    function showError(msg) {
+      errorBox.textContent = msg;
+      errorBox.classList.remove("hidden");
+    }
+    function clearError() {
+      errorBox.textContent = "";
+      errorBox.classList.add("hidden");
+    }
+
+    function validateFiles(files) {
+      if (files.length > MAX_FILES) {
+        return `Please select at most ${MAX_FILES} files.`;
+      }
+      for (const file of files) {
+        if (!ALLOWED_TYPES.has(file.type)) {
+          return `Unsupported file type for "${file.name}". Use JPG, PNG, WebP, MP4, MOV, WebM, MP3, M4A, OGG, or WAV.`;
+        }
+        if (file.size > MAX_BYTES) {
+          return `"${file.name}" exceeds the 25 MB limit.`;
+        }
+      }
+      return null;
+    }
+
+    fileInput.addEventListener("change", () => {
+      clearError();
+      const files = Array.from(fileInput.files);
+      if (!files.length) {
+        fileSummary.textContent = "No files selected.";
+        return;
+      }
+      const err = validateFiles(files);
+      if (err) {
+        showError(err);
+        fileInput.value = "";
+        fileSummary.textContent = "No files selected.";
+        return;
+      }
+      const totalMB = (files.reduce((acc, f) => acc + f.size, 0) / (1024 * 1024)).toFixed(1);
+      fileSummary.textContent = `${files.length} file(s) selected (${totalMB} MB total).`;
+    });
+
+    function normalizeBDPhone(raw) {
+      const digits = raw.replace(/\D/g, "");
+      if (digits.startsWith("880") && digits.length === 13) return "0" + digits.slice(3);
+      return digits;
+    }
+
+    // Submit handler
+    const form = document.getElementById("repair-form");
+    const submitBtn = document.getElementById("submit-btn");
+
+    form.addEventListener("submit", async (e) => {
+      e.preventDefault();
+      clearError();
+
+      const customerName = document.getElementById("customer_name").value.trim();
+      const phoneClean = normalizeBDPhone(document.getElementById("phone_number").value.trim());
+      const deviceType = document.getElementById("device_type").value;
+      const deviceModel = document.getElementById("device_model").value.trim();
+      const issueDesc = document.getElementById("issue_description").value.trim();
+      const files = Array.from(fileInput.files);
+
+      if (!/^01[3-9]\d{8}$/.test(phoneClean)) {
+        return showError("Enter a valid 11-digit Bangladeshi mobile number (e.g., 01712345678).");
+      }
+
+      const fileErr = validateFiles(files);
+      if (fileErr) return showError(fileErr);
+
+      submitBtn.disabled = true;
+      submitBtn.textContent = "Uploading & Submitting...";
+
+      try {
+        // 1. Insert ticket row first to get ticket_code and id
+        const { data: ticket, error: insertErr } = await db
+          .from("tickets")
+          .insert({
+            customer_name: customerName,
+            phone_number: phoneClean,
+            device_type: deviceType,
+            device_model: deviceModel,
+            issue_description: issueDesc
+          })
+          .select("id, ticket_code")
+          .single();
+
+        if (insertErr) throw insertErr;
+
+        // 2. Upload media files into private 'repair-media' bucket
+        const uploadedPaths = [];
+        for (let i = 0; i < files.length; i++) {
+          const f = files[i];
+          const safeName = f.name.replace(/[^a-zA-Z0-9._-]/g, "_");
+          const storagePath = `${ticket.ticket_code}/${Date.now()}_${i}_${safeName}`;
+
+          const { error: upErr } = await db.storage
+            .from("repair-media")
+            .upload(storagePath, f, { contentType: f.type, upsert: false });
+
+          if (!upErr) {
+            uploadedPaths.push({
+              path: storagePath,
+              type: f.type,
+              name: f.name
+            });
+          }
+        }
+
+        // 3. Save uploaded file metadata onto ticket
+        if (uploadedPaths.length > 0) {
+          await db
+            .from("tickets")
+            .update({ media_paths: uploadedPaths })
+            .eq("id", ticket.id);
+        }
+
+        document.getElementById("created-ticket-code").textContent = ticket.ticket_code;
+        document.getElementById("created-ticket-media-note").textContent =
+          uploadedPaths.length > 0
+            ? `${uploadedPaths.length} attachment(s) uploaded securely.`
+            : "Submitted without media attachments.";
+        document.getElementById("ticket-confirmation").classList.remove("hidden");
+        form.reset();
+        fileSummary.textContent = "No files selected.";
+      } catch (err) {
+        showError(err.message || "Could not submit your request. Please try again.");
+      } finally {
+        submitBtn.disabled = false;
+        submitBtn.textContent = "Submit Repair Request";
+      }
+    });
+
+    // Track handler
+    document.getElementById("track-form").addEventListener("submit", async (e) => {
+      e.preventDefault();
+      const code = document.getElementById("track_code").value.trim().toUpperCase();
+      const phone = normalizeBDPhone(document.getElementById("track_phone").value.trim());
+      const resultEl = document.getElementById("track-result");
+
+      resultEl.innerHTML = "Checking ticket status...";
+
+      const { data, error } = await db.rpc("check_ticket_status", {
+        p_ticket_code: code,
+        p_phone: phone
+      });
+
+      if (error || !data || data.length === 0) {
+        resultEl.innerHTML = `<p class="text-red-600">No matching ticket found. Double-check your Ticket ID and mobile number.</p>`;
+        return;
+      }
+
+      const t = data[0];
+      const costText = t.estimated_cost_bdt != null ? `৳${Number(t.estimated_cost_bdt).toLocaleString("en-BD")}` : "Pending diagnosis";
+
+      resultEl.innerHTML = `
+        <div class="border border-slate-200 rounded-xl p-4 bg-slate-50 space-y-1.5">
+          <div class="flex justify-between items-center">
+            <span class="font-mono font-bold text-base">${t.ticket_code}</span>
+            <span class="px-2.5 py-0.5 rounded-full text-xs font-semibold bg-blue-100 text-blue-800">${t.status}</span>
+          </div>
+          <p><span class="text-slate-500">Device:</span> ${t.device_model}</p>
+          <p><span class="text-slate-500">Estimated Cost (BDT):</span> ${costText}</p>
+          <p class="text-xs text-slate-400">Submitted: ${new Date(t.created_at).toLocaleString("en-BD")}</p>
+        </div>
+      `;
+    });
+  </script>
+</body>
+</html>
