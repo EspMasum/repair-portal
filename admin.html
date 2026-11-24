@@ -1,0 +1,254 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Technician Dashboard — Repair Portal</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+</head>
+<body class="bg-slate-100 text-slate-900 min-h-screen">
+  <div class="max-w-5xl mx-auto px-4 py-8">
+    <!-- LOGIN VIEW -->
+    <div id="login-view" class="max-w-md mx-auto bg-white border border-slate-200 rounded-2xl p-6 shadow-sm space-y-4">
+      <h1 class="text-xl font-bold">Technician Login</h1>
+      <p class="text-xs text-slate-500">Sign in with your Supabase technician account to review tickets and media.</p>
+      <form id="login-form" class="space-y-3">
+        <div>
+          <label class="block text-sm font-medium mb-1">Email</label>
+          <input type="email" id="login-email" required
+            class="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm" />
+        </div>
+        <div>
+          <label class="block text-sm font-medium mb-1">Password</label>
+          <input type="password" id="login-password" required
+            class="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm" />
+        </div>
+        <p id="login-error" class="hidden text-sm text-red-600"></p>
+        <button type="submit"
+          class="w-full py-2 px-4 rounded-lg bg-slate-900 hover:bg-slate-800 text-white text-sm font-semibold">
+          Sign In
+        </button>
+      </form>
+    </div>
+
+    <!-- DASHBOARD VIEW -->
+    <div id="dashboard-view" class="hidden space-y-6">
+      <div class="flex flex-wrap items-center justify-between gap-4 bg-white border border-slate-200 rounded-2xl p-4 shadow-sm">
+        <div>
+          <h1 class="text-xl font-bold">Repair Tickets Queue</h1>
+          <p id="tech-user-email" class="text-xs text-slate-500"></p>
+        </div>
+        <div class="flex items-center gap-2">
+          <select id="status-filter" class="rounded-lg border border-slate-300 px-3 py-1.5 text-sm bg-white">
+            <option value="ALL">All Statuses</option>
+            <option value="Pending">Pending</option>
+            <option value="Diagnosing">Diagnosing</option>
+            <option value="Waiting for Parts">Waiting for Parts</option>
+            <option value="Ready">Ready</option>
+            <option value="Completed">Completed</option>
+          </select>
+          <button id="refresh-btn" type="button"
+            class="px-3 py-1.5 rounded-lg bg-blue-600 hover:bg-blue-700 text-white text-sm font-medium">
+            Refresh
+          </button>
+          <button id="logout-btn" type="button"
+            class="px-3 py-1.5 rounded-lg border border-slate-300 hover:bg-slate-50 text-sm font-medium">
+            Sign Out
+          </button>
+        </div>
+      </div>
+
+      <div id="tickets-list" class="space-y-4"></div>
+    </div>
+  </div>
+
+  <script>
+    const SUPABASE_URL = "YOUR_SUPABASE_URL";
+    const SUPABASE_ANON_KEY = "YOUR_SUPABASE_ANON_KEY";
+    const db = window.supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
+
+    const loginView = document.getElementById("login-view");
+    const dashboardView = document.getElementById("dashboard-view");
+    const ticketsList = document.getElementById("tickets-list");
+
+    const STATUSES = ["Pending", "Diagnosing", "Waiting for Parts", "Ready", "Completed"];
+
+    document.getElementById("login-form").addEventListener("submit", async (e) => {
+      e.preventDefault();
+      const errEl = document.getElementById("login-error");
+      errEl.classList.add("hidden");
+
+      const email = document.getElementById("login-email").value.trim();
+      const password = document.getElementById("login-password").value;
+
+      const { error } = await db.auth.signInWithPassword({ email, password });
+      if (error) {
+        errEl.textContent = error.message;
+        errEl.classList.remove("hidden");
+      }
+    });
+
+    document.getElementById("logout-btn").addEventListener("click", async () => {
+      await db.auth.signOut();
+    });
+
+    document.getElementById("refresh-btn").addEventListener("click", loadTickets);
+    document.getElementById("status-filter").addEventListener("change", loadTickets);
+
+    db.auth.onAuthStateChange((_event, session) => {
+      if (session?.user) {
+        loginView.classList.add("hidden");
+        dashboardView.classList.remove("hidden");
+        document.getElementById("tech-user-email").textContent = `Signed in as ${session.user.email}`;
+        loadTickets();
+      } else {
+        dashboardView.classList.add("hidden");
+        loginView.classList.remove("hidden");
+      }
+    });
+
+    async function getSignedUrl(path) {
+      const { data, error } = await db.storage.from("repair-media").createSignedUrl(path, 3600);
+      return error ? null : data.signedUrl;
+    }
+
+    async function renderMediaList(mediaItems) {
+      if (!Array.isArray(mediaItems) || mediaItems.length === 0) {
+        return `<p class="text-xs text-slate-400">No media attached.</p>`;
+      }
+
+      const blocks = await Promise.all(
+        mediaItems.map(async (item) => {
+          const url = await getSignedUrl(item.path);
+          if (!url) return `<p class="text-xs text-red-500">Could not load ${item.name || item.path}</p>`;
+
+          if ((item.type || "").startsWith("image/")) {
+            return `
+              <div class="space-y-1">
+                <a href="${url}" target="_blank" rel="noopener">
+                  <img src="${url}" alt="${item.name || "Fault photo"}" class="w-36 h-28 object-cover rounded-lg border border-slate-200" />
+                </a>
+                <p class="text-[11px] text-slate-500 truncate w-36">${item.name || "Photo"}</p>
+              </div>
+            `;
+          }
+          if ((item.type || "").startsWith("audio/")) {
+            return `
+              <div class="space-y-1 min-w-[220px]">
+                <audio controls src="${url}" class="w-full h-9"></audio>
+                <p class="text-[11px] text-slate-500 truncate">${item.name || "Audio recording"}</p>
+              </div>
+            `;
+          }
+          return `
+            <div class="space-y-1 w-52">
+              <video controls src="${url}" class="w-full h-32 rounded-lg border border-slate-200 bg-black"></video>
+              <p class="text-[11px] text-slate-500 truncate">${item.name || "Video clip"}</p>
+            </div>
+          `;
+        })
+      );
+
+      return `<div class="flex flex-wrap gap-3 pt-2">${blocks.join("")}</div>`;
+    }
+
+    async function loadTickets() {
+      ticketsList.innerHTML = `<p class="text-sm text-slate-500">Loading tickets...</p>`;
+      const filterStatus = document.getElementById("status-filter").value;
+
+      let query = db.from("tickets").select("*").order("created_at", { ascending: false });
+      if (filterStatus !== "ALL") query = query.eq("status", filterStatus);
+
+      const { data: tickets, error } = await query;
+      if (error) {
+        ticketsList.innerHTML = `<p class="text-sm text-red-600">Error loading tickets: ${error.message}</p>`;
+        return;
+      }
+
+      if (!tickets.length) {
+        ticketsList.innerHTML = `<div class="bg-white border border-slate-200 rounded-2xl p-6 text-sm text-slate-500">No repair tickets found.</div>`;
+        return;
+      }
+
+      ticketsList.innerHTML = "";
+      for (const t of tickets) {
+        const mediaHtml = await renderMediaList(t.media_paths);
+        const card = document.createElement("div");
+        card.className = "bg-white border border-slate-200 rounded-2xl p-5 shadow-sm space-y-3";
+
+        const statusOptions = STATUSES.map(
+          (s) => `<option value="${s}" ${t.status === s ? "selected" : ""}>${s}</option>`
+        ).join("");
+
+        card.innerHTML = `
+          <div class="flex flex-wrap items-center justify-between gap-2 border-b border-slate-100 pb-3">
+            <div>
+              <span class="font-mono font-bold text-base text-blue-700">${t.ticket_code}</span>
+              <span class="ml-2 font-semibold">${t.customer_name}</span>
+              <span class="ml-2 text-sm text-slate-600">(${t.phone_number})</span>
+            </div>
+            <span class="text-xs text-slate-400">${new Date(t.created_at).toLocaleString("en-BD")}</span>
+          </div>
+
+          <div class="text-sm space-y-1">
+            <p><span class="font-medium text-slate-700">Device:</span> ${t.device_type} — ${t.device_model}</p>
+            <p><span class="font-medium text-slate-700">Issue:</span> ${t.issue_description}</p>
+          </div>
+
+          ${mediaHtml}
+
+          <div class="grid sm:grid-cols-3 gap-3 pt-3 border-t border-slate-100">
+            <div>
+              <label class="block text-xs font-medium text-slate-600 mb-1">Status</label>
+              <select data-field="status" class="w-full rounded-lg border border-slate-300 px-2.5 py-1.5 text-sm bg-white">
+                ${statusOptions}
+              </select>
+            </div>
+            <div>
+              <label class="block text-xs font-medium text-slate-600 mb-1">Estimated Cost (BDT)</label>
+              <input type="number" data-field="cost" value="${t.estimated_cost_bdt ?? ""}" placeholder="e.g., 1200"
+                class="w-full rounded-lg border border-slate-300 px-2.5 py-1.5 text-sm" />
+            </div>
+            <div>
+              <label class="block text-xs font-medium text-slate-600 mb-1">Technician Notes</label>
+              <input type="text" data-field="notes" value="${(t.technician_notes ?? "").replace(/"/g, "&quot;")}" placeholder="Diagnosis or part needed"
+                class="w-full rounded-lg border border-slate-300 px-2.5 py-1.5 text-sm" />
+            </div>
+          </div>
+
+          <div class="flex items-center justify-end gap-3">
+            <span data-role="save-msg" class="text-xs text-emerald-700"></span>
+            <button type="button" data-role="save-btn"
+              class="px-4 py-1.5 rounded-lg bg-slate-900 hover:bg-slate-800 text-white text-sm font-medium">
+              Save Update
+            </button>
+          </div>
+        `;
+
+        card.querySelector('[data-role="save-btn"]').addEventListener("click", async () => {
+          const statusVal = card.querySelector('[data-field="status"]').value;
+          const costRaw = card.querySelector('[data-field="cost"]').value.trim();
+          const costVal = costRaw === "" ? null : Number(costRaw);
+          const notesVal = card.querySelector('[data-field="notes"]').value.trim();
+          const msgEl = card.querySelector('[data-role="save-msg"]');
+
+          const { error: upErr } = await db
+            .from("tickets")
+            .update({
+              status: statusVal,
+              estimated_cost_bdt: costVal,
+              technician_notes: notesVal
+            })
+            .eq("id", t.id);
+
+          msgEl.textContent = upErr ? `Error: ${upErr.message}` : "Saved!";
+          msgEl.className = upErr ? "text-xs text-red-600" : "text-xs text-emerald-700";
+        });
+
+        ticketsList.appendChild(card);
+      }
+    }
+  </script>
+</body>
+</html>
