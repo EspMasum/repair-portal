@@ -74,6 +74,41 @@
 
     const STATUSES = ["Pending", "Diagnosing", "Waiting for Parts", "Ready", "Completed"];
 
+    function escapeHtml(str) {
+      return String(str ?? "")
+        .replace(/&/g, "&amp;")
+        .replace(/</g, "&lt;")
+        .replace(/>/g, "&gt;")
+        .replace(/"/g, "&quot;");
+    }
+
+    function buildWhatsAppUrl(ticket) {
+      const digits = String(ticket.phone_number || "").replace(/\D/g, "");
+      let intlPhone = digits;
+      if (digits.startsWith("0") && digits.length === 11) {
+        intlPhone = "880" + digits.slice(1);
+      } else if (!digits.startsWith("880") && digits.length === 10) {
+        intlPhone = "880" + digits;
+      }
+
+      const locationLine =
+        ticket.service_location === "At Customer Location"
+          ? `\nService Location: On-Site (${ticket.service_address || "Customer Address"})`
+          : `\nService Location: Drop-off at Shop`;
+
+      const costLine =
+        ticket.estimated_cost_bdt != null
+          ? `\nEstimated Cost: ৳${Number(ticket.estimated_cost_bdt).toLocaleString("en-BD")}`
+          : "";
+      const noteLine = ticket.technician_notes ? `\nNote: ${ticket.technician_notes}` : "";
+
+      const message =
+        `Hello ${ticket.customer_name || "Customer"}, update for Ticket ${ticket.ticket_code} (${ticket.device_model}):\n` +
+        `Status: ${ticket.status}${locationLine}${costLine}${noteLine}`;
+
+      return `https://wa.me/${intlPhone}?text=${encodeURIComponent(message)}`;
+    }
+
     document.getElementById("login-form").addEventListener("submit", async (e) => {
       e.preventDefault();
       const errEl = document.getElementById("login-error");
@@ -127,23 +162,27 @@
       return error ? null : data.signedUrl;
     }
 
-    async function renderMediaList(mediaItems) {
-      if (!Array.isArray(mediaItems) || mediaItems.length === 0) {
+    async function renderMediaSection(ticket) {
+      const mediaItems = Array.isArray(ticket.media_paths) ? ticket.media_paths : [];
+      if (mediaItems.length === 0) {
         return `<p class="text-xs text-slate-400">No media attached.</p>`;
       }
 
       const blocks = await Promise.all(
         mediaItems.map(async (item) => {
           const url = await getSignedUrl(item.path);
-          if (!url) return `<p class="text-xs text-red-500">Could not load ${item.name || item.path}</p>`;
+          const safeName = escapeHtml(item.name || item.path);
 
+          if (!url) {
+            return `<p class="text-xs text-red-500">Could not load ${safeName}</p>`;
+          }
           if ((item.type || "").startsWith("image/")) {
             return `
               <div class="space-y-1">
                 <a href="${url}" target="_blank" rel="noopener">
-                  <img src="${url}" alt="${item.name || "Fault photo"}" class="w-36 h-28 object-cover rounded-lg border border-slate-200" />
+                  <img src="${url}" alt="${safeName}" class="w-36 h-28 object-cover rounded-lg border border-slate-200" />
                 </a>
-                <p class="text-[11px] text-slate-500 truncate w-36">${item.name || "Photo"}</p>
+                <p class="text-[11px] text-slate-500 truncate w-36">${safeName}</p>
               </div>
             `;
           }
@@ -151,20 +190,34 @@
             return `
               <div class="space-y-1 min-w-[220px]">
                 <audio controls src="${url}" class="w-full h-9"></audio>
-                <p class="text-[11px] text-slate-500 truncate">${item.name || "Audio recording"}</p>
+                <p class="text-[11px] text-slate-500 truncate">${safeName}</p>
               </div>
             `;
           }
           return `
             <div class="space-y-1 w-52">
               <video controls src="${url}" class="w-full h-32 rounded-lg border border-slate-200 bg-black"></video>
-              <p class="text-[11px] text-slate-500 truncate">${item.name || "Video clip"}</p>
+              <p class="text-[11px] text-slate-500 truncate">${safeName}</p>
             </div>
           `;
         })
       );
 
-      return `<div class="flex flex-wrap gap-3 pt-2">${blocks.join("")}</div>`;
+      return `
+        <div class="pt-2 space-y-2">
+          <div class="flex flex-wrap items-center justify-between gap-2">
+            <span class="text-xs font-medium text-slate-600">Attachments (${mediaItems.length})</span>
+            <div class="flex items-center gap-2">
+              <span data-role="media-msg" class="text-xs text-slate-500"></span>
+              <button type="button" data-role="delete-media-btn"
+                class="px-2.5 py-1 rounded-lg border border-red-200 bg-red-50 hover:bg-red-100 text-red-700 text-xs font-semibold">
+                Delete Media
+              </button>
+            </div>
+          </div>
+          <div data-role="media-container" class="flex flex-wrap gap-3">${blocks.join("")}</div>
+        </div>
+      `;
     }
 
     async function loadTickets() {
@@ -176,7 +229,7 @@
 
       const { data: tickets, error } = await query;
       if (error) {
-        ticketsList.innerHTML = `<p class="text-sm text-red-600">Error loading tickets: ${error.message}</p>`;
+        ticketsList.innerHTML = `<p class="text-sm text-red-600">Error loading tickets: ${escapeHtml(error.message)}</p>`;
         return;
       }
 
@@ -187,7 +240,13 @@
 
       ticketsList.innerHTML = "";
       for (const t of tickets) {
-        const mediaHtml = await renderMediaList(t.media_paths);
+        const mediaHtml = await renderMediaSection(t);
+        const waUrl = buildWhatsAppUrl(t);
+        const isAtCustomer = t.service_location === "At Customer Location";
+        const locationBadge = isAtCustomer
+          ? `<span class="inline-flex items-center px-2 py-0.5 rounded-md text-xs font-semibold bg-amber-100 text-amber-900">On-Site / At Customer Location</span>`
+          : `<span class="inline-flex items-center px-2 py-0.5 rounded-md text-xs font-semibold bg-slate-100 text-slate-700">Drop-off at Shop</span>`;
+
         const card = document.createElement("div");
         card.className = "bg-white border border-slate-200 rounded-2xl p-5 shadow-sm space-y-3";
 
@@ -197,17 +256,23 @@
 
         card.innerHTML = `
           <div class="flex flex-wrap items-center justify-between gap-2 border-b border-slate-100 pb-3">
-            <div>
-              <span class="font-mono font-bold text-base text-blue-700">${t.ticket_code}</span>
-              <span class="ml-2 font-semibold">${t.customer_name}</span>
-              <span class="ml-2 text-sm text-slate-600">(${t.phone_number})</span>
+            <div class="flex flex-wrap items-center gap-2">
+              <span class="font-mono font-bold text-base text-blue-700">${escapeHtml(t.ticket_code)}</span>
+              <span class="font-semibold">${escapeHtml(t.customer_name)}</span>
+              <span class="text-sm text-slate-600">(${escapeHtml(t.phone_number)})</span>
+              ${locationBadge}
+              <a href="${waUrl}" target="_blank" rel="noopener"
+                class="inline-flex items-center px-2.5 py-1 rounded-lg bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-semibold">
+                WhatsApp Customer
+              </a>
             </div>
             <span class="text-xs text-slate-400">${new Date(t.created_at).toLocaleString("en-BD")}</span>
           </div>
 
           <div class="text-sm space-y-1">
-            <p><span class="font-medium text-slate-700">Device:</span> ${t.device_type} — ${t.device_model}</p>
-            <p><span class="font-medium text-slate-700">Issue:</span> ${t.issue_description}</p>
+            <p><span class="font-medium text-slate-700">Device:</span> ${escapeHtml(t.device_type)} — ${escapeHtml(t.device_model)}</p>
+            <p><span class="font-medium text-slate-700">Service Location:</span> ${escapeHtml(t.service_location || "Drop-off at Shop")}${t.service_address ? ` — <span class="font-medium text-slate-900">${escapeHtml(t.service_address)}</span>` : ""}</p>
+            <p><span class="font-medium text-slate-700">Issue:</span> ${escapeHtml(t.issue_description)}</p>
           </div>
 
           ${mediaHtml}
@@ -226,7 +291,7 @@
             </div>
             <div>
               <label class="block text-xs font-medium text-slate-600 mb-1">Technician Notes</label>
-              <input type="text" data-field="notes" value="${(t.technician_notes ?? "").replace(/"/g, "&quot;")}" placeholder="Diagnosis or part needed"
+              <input type="text" data-field="notes" value="${escapeHtml(t.technician_notes ?? "")}" placeholder="Diagnosis or part needed"
                 class="w-full rounded-lg border border-slate-300 px-2.5 py-1.5 text-sm" />
             </div>
           </div>
@@ -239,6 +304,52 @@
             </button>
           </div>
         `;
+
+        const delMediaBtn = card.querySelector('[data-role="delete-media-btn"]');
+        if (delMediaBtn) {
+          delMediaBtn.addEventListener("click", async () => {
+            const mediaMsg = card.querySelector('[data-role="media-msg"]');
+            const mediaContainer = card.querySelector('[data-role="media-container"]');
+            const paths = (Array.isArray(t.media_paths) ? t.media_paths : [])
+              .map((m) => m.path)
+              .filter(Boolean);
+
+            if (!paths.length) return;
+            if (!confirm(`Delete ${paths.length} media file(s) for ${t.ticket_code} to free storage space?`)) {
+              return;
+            }
+
+            delMediaBtn.disabled = true;
+            mediaMsg.textContent = "Deleting...";
+            mediaMsg.className = "text-xs text-slate-500";
+
+            const { error: rmErr } = await db.storage.from("repair-media").remove(paths);
+            if (rmErr) {
+              delMediaBtn.disabled = false;
+              mediaMsg.textContent = `Storage error: ${rmErr.message}`;
+              mediaMsg.className = "text-xs text-red-600";
+              return;
+            }
+
+            const { error: dbErr } = await db
+              .from("tickets")
+              .update({ media_paths: [] })
+              .eq("id", t.id);
+
+            if (dbErr) {
+              delMediaBtn.disabled = false;
+              mediaMsg.textContent = `DB error: ${dbErr.message}`;
+              mediaMsg.className = "text-xs text-red-600";
+              return;
+            }
+
+            t.media_paths = [];
+            delMediaBtn.remove();
+            if (mediaContainer) mediaContainer.innerHTML = "";
+            mediaMsg.textContent = "Media deleted & storage freed.";
+            mediaMsg.className = "text-xs text-emerald-700";
+          });
+        }
 
         card.querySelector('[data-role="save-btn"]').addEventListener("click", async () => {
           const statusVal = card.querySelector('[data-field="status"]').value;
@@ -255,6 +366,14 @@
               technician_notes: notesVal
             })
             .eq("id", t.id);
+
+          if (!upErr) {
+            t.status = statusVal;
+            t.estimated_cost_bdt = costVal;
+            t.technician_notes = notesVal;
+            const waLink = card.querySelector('a[href^="https://wa.me/"]');
+            if (waLink) waLink.href = buildWhatsAppUrl(t);
+          }
 
           msgEl.textContent = upErr ? `Error: ${upErr.message}` : "Saved!";
           msgEl.className = upErr ? "text-xs text-red-600" : "text-xs text-emerald-700";
