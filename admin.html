@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>Technician Dashboard — Repair Portal</title>
+  <title>Staff & Admin Dashboard — Repair Portal</title>
   <script src="https://cdn.tailwindcss.com"></script>
   <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 </head>
@@ -11,8 +11,8 @@
   <div class="max-w-5xl mx-auto px-4 py-8">
     <!-- LOGIN VIEW -->
     <div id="login-view" class="max-w-md mx-auto bg-white border border-slate-200 rounded-2xl p-6 shadow-sm space-y-4">
-      <h1 class="text-xl font-bold">Technician Login</h1>
-      <p class="text-xs text-slate-500">Sign in with your Supabase technician account to review tickets and media.</p>
+      <h1 class="text-xl font-bold">Staff & Admin Login</h1>
+      <p class="text-xs text-slate-500">Sign in with a technician or administrator account.</p>
       <form id="login-form" class="space-y-3">
         <div>
           <label class="block text-sm font-medium mb-1">Email</label>
@@ -36,21 +36,20 @@
     <div id="dashboard-view" class="hidden space-y-6">
       <div class="flex flex-wrap items-center justify-between gap-4 bg-white border border-slate-200 rounded-2xl p-4 shadow-sm">
         <div>
-          <h1 class="text-xl font-bold">Repair Tickets Queue</h1>
+          <div class="flex items-center gap-2">
+            <h1 class="text-xl font-bold">Repair Operations Queue</h1>
+            <span id="staff-role-badge" class="px-2 py-0.5 rounded-full text-xs font-semibold bg-slate-200 text-slate-800"></span>
+          </div>
           <p id="tech-user-email" class="text-xs text-slate-500"></p>
         </div>
-        <div class="flex items-center gap-2">
-          <select id="status-filter" class="rounded-lg border border-slate-300 px-3 py-1.5 text-sm bg-white">
-            <option value="ALL">All Statuses</option>
-            <option value="Pending">Pending</option>
-            <option value="Diagnosing">Diagnosing</option>
-            <option value="Waiting for Parts">Waiting for Parts</option>
-            <option value="Ready">Ready</option>
-            <option value="Completed">Completed</option>
-          </select>
-          <button id="refresh-btn" type="button"
-            class="px-3 py-1.5 rounded-lg bg-blue-600 hover:bg-blue-700 text-white text-sm font-medium">
-            Refresh
+        <div class="flex flex-wrap items-center gap-2">
+          <button id="nav-tickets-btn" type="button"
+            class="px-3 py-1.5 rounded-lg bg-slate-900 text-white text-sm font-medium">
+            Tickets
+          </button>
+          <button id="nav-users-btn" type="button"
+            class="hidden px-3 py-1.5 rounded-lg border border-slate-300 hover:bg-slate-50 text-sm font-medium">
+            User Roles
           </button>
           <button id="logout-btn" type="button"
             class="px-3 py-1.5 rounded-lg border border-slate-300 hover:bg-slate-50 text-sm font-medium">
@@ -59,7 +58,41 @@
         </div>
       </div>
 
-      <div id="tickets-list" class="space-y-4"></div>
+      <!-- TICKETS SECTION -->
+      <section id="section-tickets" class="space-y-4">
+        <div class="flex flex-wrap items-center justify-between gap-2">
+          <select id="status-filter" class="rounded-lg border border-slate-300 px-3 py-1.5 text-sm bg-white">
+            <option value="ALL">All Statuses</option>
+            <option value="Pending">Pending</option>
+            <option value="Diagnosing">Diagnosing</option>
+            <option value="Waiting for Parts">Waiting for Parts</option>
+            <option value="Ready">Ready</option>
+            <option value="Completed">Completed</option>
+            <option value="Cancelled">Cancelled</option>
+          </select>
+          <button id="refresh-btn" type="button"
+            class="px-3 py-1.5 rounded-lg bg-blue-600 hover:bg-blue-700 text-white text-sm font-medium">
+            Refresh Tickets
+          </button>
+        </div>
+
+        <div id="tickets-list" class="space-y-4"></div>
+      </section>
+
+      <!-- ADMIN USER ROLES SECTION -->
+      <section id="section-users" class="hidden bg-white border border-slate-200 rounded-2xl p-5 shadow-sm space-y-4">
+        <div class="flex items-center justify-between">
+          <div>
+            <h2 class="text-base font-bold">User Level Management</h2>
+            <p class="text-xs text-slate-500">Assign administrator, technician, or standard user roles.</p>
+          </div>
+          <button id="refresh-users-btn" type="button"
+            class="px-3 py-1.5 rounded-lg bg-blue-600 hover:bg-blue-700 text-white text-sm font-medium">
+            Refresh Users
+          </button>
+        </div>
+        <div id="users-list" class="divide-y divide-slate-100"></div>
+      </section>
     </div>
   </div>
 
@@ -68,11 +101,24 @@
     const SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImRtYmtmbXR6bGNrZ3lrZGp5b3V3Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3OTU0OTE2NjMsImV4cCI6MjExMTA2NzY2M30.TeLo14UrxSpTEW2yRhvOakBqzfl2qza4JeHj3n3ajMU";
     const db = window.supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
 
+    let currentRole = null;
+
     const loginView = document.getElementById("login-view");
     const dashboardView = document.getElementById("dashboard-view");
     const ticketsList = document.getElementById("tickets-list");
+    const sectionTickets = document.getElementById("section-tickets");
+    const sectionUsers = document.getElementById("section-users");
+    const navTicketsBtn = document.getElementById("nav-tickets-btn");
+    const navUsersBtn = document.getElementById("nav-users-btn");
 
-    const STATUSES = ["Pending", "Diagnosing", "Waiting for Parts", "Ready", "Completed"];
+    const STATUSES = ["Pending", "Diagnosing", "Waiting for Parts", "Ready", "Completed", "Cancelled"];
+    const STAFF_CANCEL_REASONS = [
+      "Spare part unavailable",
+      "Device beyond economical repair",
+      "Service location outside coverage area",
+      "Customer requested cancellation",
+      "Other"
+    ];
 
     function escapeHtml(str) {
       return String(str ?? "")
@@ -100,24 +146,45 @@
         ticket.estimated_cost_bdt != null
           ? `\nEstimated Cost: ৳${Number(ticket.estimated_cost_bdt).toLocaleString("en-BD")}`
           : "";
+      const cancelLine =
+        ticket.status === "Cancelled" && ticket.cancellation_reason
+          ? `\nCancellation Reason: ${ticket.cancellation_reason}`
+          : "";
       const noteLine = ticket.technician_notes ? `\nNote: ${ticket.technician_notes}` : "";
 
       const message =
         `Hello ${ticket.customer_name || "Customer"}, update for Ticket ${ticket.ticket_code} (${ticket.device_model}):\n` +
-        `Status: ${ticket.status}${locationLine}${costLine}${noteLine}`;
+        `Status: ${ticket.status}${locationLine}${costLine}${cancelLine}${noteLine}`;
 
       return `https://wa.me/${intlPhone}?text=${encodeURIComponent(message)}`;
     }
+
+    navTicketsBtn.addEventListener("click", () => {
+      sectionTickets.classList.remove("hidden");
+      sectionUsers.classList.add("hidden");
+      navTicketsBtn.className = "px-3 py-1.5 rounded-lg bg-slate-900 text-white text-sm font-medium";
+      navUsersBtn.className = "px-3 py-1.5 rounded-lg border border-slate-300 hover:bg-slate-50 text-sm font-medium";
+      loadTickets();
+    });
+
+    navUsersBtn.addEventListener("click", () => {
+      sectionUsers.classList.remove("hidden");
+      sectionTickets.classList.add("hidden");
+      navUsersBtn.className = "px-3 py-1.5 rounded-lg bg-slate-900 text-white text-sm font-medium";
+      navTicketsBtn.className = "px-3 py-1.5 rounded-lg border border-slate-300 hover:bg-slate-50 text-sm font-medium";
+      loadUsers();
+    });
 
     document.getElementById("login-form").addEventListener("submit", async (e) => {
       e.preventDefault();
       const errEl = document.getElementById("login-error");
       errEl.classList.add("hidden");
 
-      const email = document.getElementById("login-email").value.trim();
-      const password = document.getElementById("login-password").value;
+      const { error } = await db.auth.signInWithPassword({
+        email: document.getElementById("login-email").value.trim(),
+        password: document.getElementById("login-password").value
+      });
 
-      const { error } = await db.auth.signInWithPassword({ email, password });
       if (error) {
         errEl.textContent = error.message;
         errEl.classList.remove("hidden");
@@ -130,6 +197,7 @@
 
     document.getElementById("refresh-btn").addEventListener("click", loadTickets);
     document.getElementById("status-filter").addEventListener("change", loadTickets);
+    document.getElementById("refresh-users-btn").addEventListener("click", loadUsers);
 
     db.auth.onAuthStateChange(async (_event, session) => {
       if (session?.user) {
@@ -139,19 +207,31 @@
           .eq("id", session.user.id)
           .single();
 
-        if (profile?.role !== "technician") {
+        if (!["technician", "administrator"].includes(profile?.role)) {
           await db.auth.signOut();
           const errEl = document.getElementById("login-error");
-          errEl.textContent = "Access denied: Technician privileges required.";
+          errEl.textContent = "Access denied: Technician or Administrator role required.";
           errEl.classList.remove("hidden");
           return;
         }
 
+        currentRole = profile.role;
         loginView.classList.add("hidden");
         dashboardView.classList.remove("hidden");
         document.getElementById("tech-user-email").textContent = `Signed in as ${session.user.email}`;
+        document.getElementById("staff-role-badge").textContent = currentRole.toUpperCase();
+
+        if (currentRole === "administrator") {
+          navUsersBtn.classList.remove("hidden");
+        } else {
+          navUsersBtn.classList.add("hidden");
+          sectionUsers.classList.add("hidden");
+          sectionTickets.classList.remove("hidden");
+        }
+
         loadTickets();
       } else {
+        currentRole = null;
         dashboardView.classList.add("hidden");
         loginView.classList.remove("hidden");
       }
@@ -173,9 +253,7 @@
           const url = await getSignedUrl(item.path);
           const safeName = escapeHtml(item.name || item.path);
 
-          if (!url) {
-            return `<p class="text-xs text-red-500">Could not load ${safeName}</p>`;
-          }
+          if (!url) return `<p class="text-xs text-red-500">Could not load ${safeName}</p>`;
           if ((item.type || "").startsWith("image/")) {
             return `
               <div class="space-y-1">
@@ -247,6 +325,32 @@
           ? `<span class="inline-flex items-center px-2 py-0.5 rounded-md text-xs font-semibold bg-amber-100 text-amber-900">On-Site / At Customer Location</span>`
           : `<span class="inline-flex items-center px-2 py-0.5 rounded-md text-xs font-semibold bg-slate-100 text-slate-700">Drop-off at Shop</span>`;
 
+        const cancelBannerHtml = t.status === "Cancelled"
+          ? `<p class="text-xs bg-red-50 border border-red-200 rounded-lg p-2.5 text-red-800"><span class="font-semibold">Cancelled (${escapeHtml(t.cancelled_by || "staff")}):</span> ${escapeHtml(t.cancellation_reason || "No reason provided")}</p>`
+          : "";
+
+        const reasonOptions = STAFF_CANCEL_REASONS
+          .map((r) => `<option value="${escapeHtml(r)}">${escapeHtml(r)}</option>`)
+          .join("");
+
+        const rejectBlockHtml = t.status !== "Cancelled"
+          ? `
+            <div class="pt-3 border-t border-slate-100 flex flex-wrap items-center justify-between gap-2">
+              <div class="flex flex-wrap items-center gap-2">
+                <select data-role="reject-reason" class="rounded-lg border border-slate-300 px-2.5 py-1.5 text-xs bg-white">
+                  <option value="">Select rejection/cancellation reason...</option>
+                  ${reasonOptions}
+                </select>
+                <button type="button" data-role="reject-btn"
+                  class="px-3 py-1.5 rounded-lg border border-red-200 bg-red-50 hover:bg-red-100 text-red-700 text-xs font-semibold">
+                  Reject / Cancel Ticket
+                </button>
+              </div>
+              <span data-role="reject-msg" class="text-xs text-red-600"></span>
+            </div>
+          `
+          : "";
+
         const card = document.createElement("div");
         card.className = "bg-white border border-slate-200 rounded-2xl p-5 shadow-sm space-y-3";
 
@@ -275,6 +379,7 @@
             <p><span class="font-medium text-slate-700">Issue:</span> ${escapeHtml(t.issue_description)}</p>
           </div>
 
+          ${cancelBannerHtml}
           ${mediaHtml}
 
           <div class="grid sm:grid-cols-3 gap-3 pt-3 border-t border-slate-100">
@@ -303,6 +408,8 @@
               Save Update
             </button>
           </div>
+
+          ${rejectBlockHtml}
         `;
 
         const delMediaBtn = card.querySelector('[data-role="delete-media-btn"]');
@@ -310,44 +417,68 @@
           delMediaBtn.addEventListener("click", async () => {
             const mediaMsg = card.querySelector('[data-role="media-msg"]');
             const mediaContainer = card.querySelector('[data-role="media-container"]');
-            const paths = (Array.isArray(t.media_paths) ? t.media_paths : [])
-              .map((m) => m.path)
-              .filter(Boolean);
-
+            const paths = (Array.isArray(t.media_paths) ? t.media_paths : []).map((m) => m.path).filter(Boolean);
             if (!paths.length) return;
-            if (!confirm(`Delete ${paths.length} media file(s) for ${t.ticket_code} to free storage space?`)) {
-              return;
-            }
+            if (!confirm(`Delete ${paths.length} media file(s) for ${t.ticket_code}?`)) return;
 
             delMediaBtn.disabled = true;
             mediaMsg.textContent = "Deleting...";
-            mediaMsg.className = "text-xs text-slate-500";
 
             const { error: rmErr } = await db.storage.from("repair-media").remove(paths);
             if (rmErr) {
               delMediaBtn.disabled = false;
               mediaMsg.textContent = `Storage error: ${rmErr.message}`;
-              mediaMsg.className = "text-xs text-red-600";
               return;
             }
 
-            const { error: dbErr } = await db
-              .from("tickets")
-              .update({ media_paths: [] })
-              .eq("id", t.id);
-
-            if (dbErr) {
-              delMediaBtn.disabled = false;
-              mediaMsg.textContent = `DB error: ${dbErr.message}`;
-              mediaMsg.className = "text-xs text-red-600";
-              return;
-            }
-
+            await db.from("tickets").update({ media_paths: [] }).eq("id", t.id);
             t.media_paths = [];
             delMediaBtn.remove();
             if (mediaContainer) mediaContainer.innerHTML = "";
             mediaMsg.textContent = "Media deleted & storage freed.";
             mediaMsg.className = "text-xs text-emerald-700";
+          });
+        }
+
+        const rejectBtn = card.querySelector('[data-role="reject-btn"]');
+        if (rejectBtn) {
+          rejectBtn.addEventListener("click", async () => {
+            const reasonSel = card.querySelector('[data-role="reject-reason"]');
+            const rejectMsg = card.querySelector('[data-role="reject-msg"]');
+            const reason = reasonSel.value;
+
+            if (!reason) {
+              rejectMsg.textContent = "Choose a reason before rejecting/cancelling.";
+              return;
+            }
+            if (!confirm(`Reject/cancel ticket ${t.ticket_code} for reason: "${reason}"? Attached media will be deleted.`)) return;
+
+            rejectBtn.disabled = true;
+            rejectMsg.textContent = "Cancelling...";
+
+            const paths = (Array.isArray(t.media_paths) ? t.media_paths : []).map((m) => m.path).filter(Boolean);
+            if (paths.length > 0) {
+              await db.storage.from("repair-media").remove(paths);
+            }
+
+            const { error: upErr } = await db
+              .from("tickets")
+              .update({
+                status: "Cancelled",
+                cancellation_reason: reason,
+                cancelled_by: currentRole || "technician",
+                cancelled_at: new Date().toISOString(),
+                media_paths: []
+              })
+              .eq("id", t.id);
+
+            if (upErr) {
+              rejectBtn.disabled = false;
+              rejectMsg.textContent = `Error: ${upErr.message}`;
+              return;
+            }
+
+            loadTickets();
           });
         }
 
@@ -380,6 +511,60 @@
         });
 
         ticketsList.appendChild(card);
+      }
+    }
+
+    async function loadUsers() {
+      const usersList = document.getElementById("users-list");
+      usersList.innerHTML = `<p class="text-sm text-slate-500 py-2">Loading users...</p>`;
+
+      const { data: profiles, error } = await db.rpc("admin_list_profiles");
+      if (error) {
+        usersList.innerHTML = `<p class="text-sm text-red-600 py-2">Error: ${escapeHtml(error.message)}</p>`;
+        return;
+      }
+
+      const roles = ["user", "technician", "administrator"];
+      usersList.innerHTML = "";
+
+      for (const u of profiles) {
+        const row = document.createElement("div");
+        row.className = "py-3 flex flex-wrap items-center justify-between gap-3";
+        const optionsHtml = roles
+          .map((r) => `<option value="${r}" ${u.role === r ? "selected" : ""}>${r}</option>`)
+          .join("");
+
+        row.innerHTML = `
+          <div>
+            <p class="text-sm font-semibold">${escapeHtml(u.full_name || "Unnamed User")}</p>
+            <p class="text-xs text-slate-500">${escapeHtml(u.phone_number || "No phone")} · <span class="font-mono">${escapeHtml(u.id)}</span></p>
+          </div>
+          <div class="flex items-center gap-2">
+            <select data-role="user-role-select" class="rounded-lg border border-slate-300 px-2.5 py-1.5 text-sm bg-white">
+              ${optionsHtml}
+            </select>
+            <button type="button" data-role="save-role-btn"
+              class="px-3 py-1.5 rounded-lg bg-slate-900 hover:bg-slate-800 text-white text-xs font-semibold">
+              Update Role
+            </button>
+            <span data-role="role-msg" class="text-xs text-emerald-700"></span>
+          </div>
+        `;
+
+        row.querySelector('[data-role="save-role-btn"]').addEventListener("click", async () => {
+          const newRole = row.querySelector('[data-role="user-role-select"]').value;
+          const msgEl = row.querySelector('[data-role="role-msg"]');
+
+          const { error: rpcErr } = await db.rpc("admin_set_user_role", {
+            p_user_id: u.id,
+            p_new_role: newRole
+          });
+
+          msgEl.textContent = rpcErr ? `Error: ${rpcErr.message}` : "Updated";
+          msgEl.className = rpcErr ? "text-xs text-red-600" : "text-xs text-emerald-700";
+        });
+
+        usersList.appendChild(row);
       }
     }
   </script>
