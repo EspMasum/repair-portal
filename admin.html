@@ -61,15 +61,35 @@
       <!-- TICKETS SECTION -->
       <section id="section-tickets" class="space-y-4">
         <div class="flex flex-wrap items-center justify-between gap-2">
-          <select id="status-filter" class="rounded-lg border border-slate-300 px-3 py-1.5 text-sm bg-white">
-            <option value="ALL">All Statuses</option>
-            <option value="Pending">Pending</option>
-            <option value="Diagnosing">Diagnosing</option>
-            <option value="Waiting for Parts">Waiting for Parts</option>
-            <option value="Ready">Ready</option>
-            <option value="Completed">Completed</option>
-            <option value="Cancelled">Cancelled</option>
-          </select>
+          <div class="flex flex-wrap items-center gap-2">
+            <!-- Technician scope selector -->
+            <select id="tech-scope-filter" class="hidden rounded-lg border border-slate-300 px-3 py-1.5 text-sm bg-white">
+              <option value="PENDING">Pending Jobs</option>
+              <option value="MINE">My Jobs</option>
+            </select>
+
+            <!-- Technician status selector when viewing My Jobs -->
+            <select id="tech-my-status-filter" class="hidden rounded-lg border border-slate-300 px-3 py-1.5 text-sm bg-white">
+              <option value="ALL">All (My Jobs)</option>
+              <option value="Assigned">Assigned</option>
+              <option value="Accepted">Accepted</option>
+              <option value="Completed">Completed</option>
+            </select>
+
+            <!-- Admin full status filter -->
+            <select id="admin-status-filter" class="hidden rounded-lg border border-slate-300 px-3 py-1.5 text-sm bg-white">
+              <option value="ALL">All Jobs</option>
+              <option value="Pending">Pending</option>
+              <option value="Assigned">Assigned</option>
+              <option value="Accepted">Accepted</option>
+              <option value="Diagnosing">Diagnosing</option>
+              <option value="Waiting for Parts">Waiting for Parts</option>
+              <option value="Ready">Ready</option>
+              <option value="Completed">Completed</option>
+              <option value="Cancelled">Cancelled</option>
+            </select>
+          </div>
+
           <button id="refresh-btn" type="button"
             class="px-3 py-1.5 rounded-lg bg-blue-600 hover:bg-blue-700 text-white text-sm font-medium">
             Refresh Tickets
@@ -101,7 +121,9 @@
     const SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImRtYmtmbXR6bGNrZ3lrZGp5b3V3Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3OTU0OTE2NjMsImV4cCI6MjExMTA2NzY2M30.TeLo14UrxSpTEW2yRhvOakBqzfl2qza4JeHj3n3ajMU";
     const db = window.supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
 
+    let currentUserId = null;
     let currentRole = null;
+    let techniciansList = [];
 
     const loginView = document.getElementById("login-view");
     const dashboardView = document.getElementById("dashboard-view");
@@ -111,7 +133,11 @@
     const navTicketsBtn = document.getElementById("nav-tickets-btn");
     const navUsersBtn = document.getElementById("nav-users-btn");
 
-    const STATUSES = ["Pending", "Diagnosing", "Waiting for Parts", "Ready", "Completed", "Cancelled"];
+    const techScopeFilter = document.getElementById("tech-scope-filter");
+    const techMyStatusFilter = document.getElementById("tech-my-status-filter");
+    const adminStatusFilter = document.getElementById("admin-status-filter");
+
+    const STATUSES = ["Pending", "Assigned", "Accepted", "Diagnosing", "Waiting for Parts", "Ready", "Completed", "Cancelled"];
     const STAFF_CANCEL_REASONS = [
       "Spare part unavailable",
       "Device beyond economical repair",
@@ -195,12 +221,24 @@
       await db.auth.signOut();
     });
 
+    function syncTechFilterVisibility() {
+      if (currentRole === "technician") {
+        techMyStatusFilter.classList.toggle("hidden", techScopeFilter.value !== "MINE");
+      }
+    }
+
+    techScopeFilter.addEventListener("change", () => {
+      syncTechFilterVisibility();
+      loadTickets();
+    });
+    techMyStatusFilter.addEventListener("change", loadTickets);
+    adminStatusFilter.addEventListener("change", loadTickets);
     document.getElementById("refresh-btn").addEventListener("click", loadTickets);
-    document.getElementById("status-filter").addEventListener("change", loadTickets);
     document.getElementById("refresh-users-btn").addEventListener("click", loadUsers);
 
     db.auth.onAuthStateChange(async (_event, session) => {
       if (session?.user) {
+        currentUserId = session.user.id;
         const { data: profile } = await db
           .from("profiles")
           .select("role")
@@ -223,14 +261,24 @@
 
         if (currentRole === "administrator") {
           navUsersBtn.classList.remove("hidden");
+          adminStatusFilter.classList.remove("hidden");
+          techScopeFilter.classList.add("hidden");
+          techMyStatusFilter.classList.add("hidden");
+          const { data: techs } = await db.rpc("list_technicians");
+          techniciansList = techs || [];
         } else {
           navUsersBtn.classList.add("hidden");
           sectionUsers.classList.add("hidden");
           sectionTickets.classList.remove("hidden");
+          adminStatusFilter.classList.add("hidden");
+          techScopeFilter.classList.remove("hidden");
+          techScopeFilter.value = "PENDING";
+          syncTechFilterVisibility();
         }
 
         loadTickets();
       } else {
+        currentUserId = null;
         currentRole = null;
         dashboardView.classList.add("hidden");
         loginView.classList.remove("hidden");
@@ -300,10 +348,21 @@
 
     async function loadTickets() {
       ticketsList.innerHTML = `<p class="text-sm text-slate-500">Loading tickets...</p>`;
-      const filterStatus = document.getElementById("status-filter").value;
 
       let query = db.from("tickets").select("*").order("created_at", { ascending: false });
-      if (filterStatus !== "ALL") query = query.eq("status", filterStatus);
+
+      if (currentRole === "administrator") {
+        const st = adminStatusFilter.value;
+        if (st !== "ALL") query = query.eq("status", st);
+      } else if (currentRole === "technician") {
+        if (techScopeFilter.value === "PENDING") {
+          query = query.eq("status", "Pending");
+        } else {
+          query = query.or(`accepted_by.eq.${currentUserId},assigned_to.eq.${currentUserId}`);
+          const mySt = techMyStatusFilter.value;
+          if (mySt !== "ALL") query = query.eq("status", mySt);
+        }
+      }
 
       const { data: tickets, error } = await query;
       if (error) {
@@ -312,9 +371,13 @@
       }
 
       if (!tickets.length) {
-        ticketsList.innerHTML = `<div class="bg-white border border-slate-200 rounded-2xl p-6 text-sm text-slate-500">No repair tickets found.</div>`;
+        ticketsList.innerHTML = `<div class="bg-white border border-slate-200 rounded-2xl p-6 text-sm text-slate-500">No repair tickets found for this view.</div>`;
         return;
       }
+
+      const techNameMap = Object.fromEntries(
+        techniciansList.map((t) => [t.id, t.full_name || t.email || t.id])
+      );
 
       ticketsList.innerHTML = "";
       for (const t of tickets) {
@@ -325,9 +388,60 @@
           ? `<span class="inline-flex items-center px-2 py-0.5 rounded-md text-xs font-semibold bg-amber-100 text-amber-900">On-Site / At Customer Location</span>`
           : `<span class="inline-flex items-center px-2 py-0.5 rounded-md text-xs font-semibold bg-slate-100 text-slate-700">Drop-off at Shop</span>`;
 
+        const approvalBadge = `<span class="inline-flex items-center px-2 py-0.5 rounded-md text-xs font-semibold bg-purple-100 text-purple-900">${escapeHtml(t.admin_approval_status || "Pending Approval")}</span>`;
+
+        const acceptedNote = t.accepted_by
+          ? `<p class="text-xs text-slate-600"><span class="font-semibold">Accepted By:</span> ${escapeHtml(t.accepted_by === currentUserId ? "You" : (techNameMap[t.accepted_by] || t.accepted_by))}</p>`
+          : "";
+        const assignedNote = t.assigned_to
+          ? `<p class="text-xs text-slate-600"><span class="font-semibold">Assigned To:</span> ${escapeHtml(t.assigned_to === currentUserId ? "You" : (techNameMap[t.assigned_to] || t.assigned_to))}</p>`
+          : "";
+
         const cancelBannerHtml = t.status === "Cancelled"
           ? `<p class="text-xs bg-red-50 border border-red-200 rounded-lg p-2.5 text-red-800"><span class="font-semibold">Cancelled (${escapeHtml(t.cancelled_by || "staff")}):</span> ${escapeHtml(t.cancellation_reason || "No reason provided")}</p>`
           : "";
+
+        // Technician Accept button on Pending tickets (stays Pending until admin approves or assigns)
+        const techAcceptHtml =
+          currentRole === "technician" && t.status === "Pending" && !t.accepted_by
+            ? `
+              <div class="pt-2 flex flex-wrap items-center gap-2">
+                <button type="button" data-role="tech-accept-btn"
+                  class="px-3.5 py-1.5 rounded-lg bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-semibold">
+                  Accept Pending Job (Awaiting Admin Approval)
+                </button>
+                <span data-role="tech-accept-msg" class="text-xs text-emerald-700"></span>
+              </div>
+            `
+            : "";
+
+        // Administrator Approve + Assign controls
+        const techSelectOptions = techniciansList
+          .map((tech) => `<option value="${escapeHtml(tech.id)}" ${t.assigned_to === tech.id ? "selected" : ""}>${escapeHtml(tech.full_name || tech.email || tech.id)}</option>`)
+          .join("");
+
+        const adminControlsHtml =
+          currentRole === "administrator" && t.status !== "Cancelled"
+            ? `
+              <div class="pt-3 border-t border-slate-100 flex flex-wrap items-center justify-between gap-3">
+                <div class="flex flex-wrap items-center gap-2">
+                  <button type="button" data-role="admin-approve-btn"
+                    class="px-3 py-1.5 rounded-lg bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-semibold">
+                    Approve Job
+                  </button>
+                  <select data-role="assign-tech-select" class="rounded-lg border border-slate-300 px-2.5 py-1.5 text-xs bg-white">
+                    <option value="">Assign technician...</option>
+                    ${techSelectOptions}
+                  </select>
+                  <button type="button" data-role="admin-assign-btn"
+                    class="px-3 py-1.5 rounded-lg bg-blue-600 hover:bg-blue-700 text-white text-xs font-semibold">
+                    Assign
+                  </button>
+                </div>
+                <span data-role="admin-action-msg" class="text-xs text-emerald-700"></span>
+              </div>
+            `
+            : "";
 
         const reasonOptions = STAFF_CANCEL_REASONS
           .map((r) => `<option value="${escapeHtml(r)}">${escapeHtml(r)}</option>`)
@@ -364,6 +478,8 @@
               <span class="font-mono font-bold text-base text-blue-700">${escapeHtml(t.ticket_code)}</span>
               <span class="font-semibold">${escapeHtml(t.customer_name)}</span>
               <span class="text-sm text-slate-600">(${escapeHtml(t.phone_number)})</span>
+              <span class="px-2 py-0.5 rounded-full text-xs font-semibold bg-blue-100 text-blue-800">${escapeHtml(t.status)}</span>
+              ${approvalBadge}
               ${locationBadge}
               <a href="${waUrl}" target="_blank" rel="noopener"
                 class="inline-flex items-center px-2.5 py-1 rounded-lg bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-semibold">
@@ -377,10 +493,14 @@
             <p><span class="font-medium text-slate-700">Device:</span> ${escapeHtml(t.device_type)} — ${escapeHtml(t.device_model)}</p>
             <p><span class="font-medium text-slate-700">Service Location:</span> ${escapeHtml(t.service_location || "Drop-off at Shop")}${t.service_address ? ` — <span class="font-medium text-slate-900">${escapeHtml(t.service_address)}</span>` : ""}</p>
             <p><span class="font-medium text-slate-700">Issue:</span> ${escapeHtml(t.issue_description)}</p>
+            ${acceptedNote}
+            ${assignedNote}
           </div>
 
           ${cancelBannerHtml}
           ${mediaHtml}
+          ${techAcceptHtml}
+          ${adminControlsHtml}
 
           <div class="grid sm:grid-cols-3 gap-3 pt-3 border-t border-slate-100">
             <div>
@@ -412,6 +532,85 @@
           ${rejectBlockHtml}
         `;
 
+        // Technician accept handler (stays Pending until admin approves or assigns)
+        const acceptBtn = card.querySelector('[data-role="tech-accept-btn"]');
+        if (acceptBtn) {
+          acceptBtn.addEventListener("click", async () => {
+            const msgEl = card.querySelector('[data-role="tech-accept-msg"]');
+            acceptBtn.disabled = true;
+            const { error: accErr } = await db
+              .from("tickets")
+              .update({
+                accepted_by: currentUserId,
+                admin_approval_status: "Pending Approval"
+              })
+              .eq("id", t.id)
+              .eq("status", "Pending");
+
+            if (accErr) {
+              acceptBtn.disabled = false;
+              msgEl.textContent = `Error: ${accErr.message}`;
+              return;
+            }
+            loadTickets();
+          });
+        }
+
+        // Admin approve handler
+        const approveBtn = card.querySelector('[data-role="admin-approve-btn"]');
+        if (approveBtn) {
+          approveBtn.addEventListener("click", async () => {
+            const msgEl = card.querySelector('[data-role="admin-action-msg"]');
+            approveBtn.disabled = true;
+            const nextStatus = t.status === "Pending" ? "Accepted" : t.status;
+            const { error: appErr } = await db
+              .from("tickets")
+              .update({
+                admin_approval_status: "Approved",
+                status: nextStatus
+              })
+              .eq("id", t.id);
+
+            if (appErr) {
+              approveBtn.disabled = false;
+              msgEl.textContent = `Error: ${appErr.message}`;
+              return;
+            }
+            loadTickets();
+          });
+        }
+
+        // Admin assign technician handler
+        const assignBtn = card.querySelector('[data-role="admin-assign-btn"]');
+        if (assignBtn) {
+          assignBtn.addEventListener("click", async () => {
+            const sel = card.querySelector('[data-role="assign-tech-select"]');
+            const msgEl = card.querySelector('[data-role="admin-action-msg"]');
+            const techId = sel.value;
+            if (!techId) {
+              msgEl.textContent = "Select a technician first.";
+              return;
+            }
+            assignBtn.disabled = true;
+            const { error: asgErr } = await db
+              .from("tickets")
+              .update({
+                assigned_to: techId,
+                admin_approval_status: "Approved",
+                status: "Assigned"
+              })
+              .eq("id", t.id);
+
+            if (asgErr) {
+              assignBtn.disabled = false;
+              msgEl.textContent = `Error: ${asgErr.message}`;
+              return;
+            }
+            loadTickets();
+          });
+        }
+
+        // Delete media handler
         const delMediaBtn = card.querySelector('[data-role="delete-media-btn"]');
         if (delMediaBtn) {
           delMediaBtn.addEventListener("click", async () => {
@@ -440,6 +639,7 @@
           });
         }
 
+        // Reject / cancel handler
         const rejectBtn = card.querySelector('[data-role="reject-btn"]');
         if (rejectBtn) {
           rejectBtn.addEventListener("click", async () => {
@@ -465,6 +665,7 @@
               .from("tickets")
               .update({
                 status: "Cancelled",
+                admin_approval_status: "Rejected",
                 cancellation_reason: reason,
                 cancelled_by: currentRole || "technician",
                 cancelled_at: new Date().toISOString(),
@@ -482,6 +683,7 @@
           });
         }
 
+        // Save status/cost/notes handler
         card.querySelector('[data-role="save-btn"]').addEventListener("click", async () => {
           const statusVal = card.querySelector('[data-field="status"]').value;
           const costRaw = card.querySelector('[data-field="cost"]').value.trim();
@@ -534,10 +736,13 @@
           .map((r) => `<option value="${r}" ${u.role === r ? "selected" : ""}>${r}</option>`)
           .join("");
 
+        const bizLine = [u.business_name, u.business_type, u.business_address].filter(Boolean).join(" · ");
+
         row.innerHTML = `
           <div>
             <p class="text-sm font-semibold">${escapeHtml(u.full_name || "Unnamed User")}</p>
-            <p class="text-xs text-slate-500">${escapeHtml(u.phone_number || "No phone")} · <span class="font-mono">${escapeHtml(u.id)}</span></p>
+            <p class="text-xs text-slate-500">${escapeHtml(u.phone_number || "No phone")} · ${escapeHtml(u.email || "")}</p>
+            ${bizLine ? `<p class="text-xs text-slate-600">${escapeHtml(bizLine)}</p>` : ""}
           </div>
           <div class="flex items-center gap-2">
             <select data-role="user-role-select" class="rounded-lg border border-slate-300 px-2.5 py-1.5 text-sm bg-white">
