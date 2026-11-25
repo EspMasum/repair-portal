@@ -133,10 +133,27 @@
             </div>
           </div>
 
+          <!-- Service Location Option -->
+          <div class="space-y-3 bg-slate-50 border border-slate-200 rounded-xl p-4">
+            <div>
+              <label class="block text-sm font-medium mb-1">Where Should Repair / Servicing Happen? *</label>
+              <select id="service_location" required
+                class="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm bg-white focus:outline-none focus:ring-2 focus:ring-blue-600">
+                <option value="Drop-off at Shop">Drop-off at Repair Shop</option>
+                <option value="At Customer Location">At My Location (On-Site / Home Service)</option>
+              </select>
+            </div>
+            <div id="service-address-wrap" class="hidden">
+              <label class="block text-sm font-medium mb-1">Your Address / Area *</label>
+              <input type="text" id="service_address" placeholder="House/Road, Area, City (e.g., Dhanmondi 8A, Dhaka)"
+                class="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm bg-white focus:outline-none focus:ring-2 focus:ring-blue-600" />
+            </div>
+          </div>
+
           <div>
-            <label class="block text-sm font-medium mb-1">Describe the Fault / Issue *</label>
+            <label class="block text-sm font-medium mb-1">Describe the Fault or Servicing Needed *</label>
             <textarea id="issue_description" rows="4" required
-              placeholder="When did it start? Does it turn on, overheat, make noise, or fail to charge?"
+              placeholder="Describe the fault or servicing job needed, when it started, and any preferred time..."
               class="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-600"></textarea>
           </div>
 
@@ -161,7 +178,7 @@
 
         <div id="ticket-confirmation" class="hidden bg-emerald-50 border border-emerald-200 rounded-xl p-5 space-y-1.5">
           <p class="text-sm font-semibold text-emerald-800">Repair Request Submitted!</p>
-          <p class="text-sm text-emerald-900">Your Ticket ID is <span id="created-ticket-code" class="font-mono font-bold"></span>. You can track progress anytime under <strong>My Repair Tickets</strong>.</p>
+          <p class="text-sm text-emerald-900">Your Ticket ID is <span id="created-ticket-code" class="font-mono font-bold"></span>. You can cancel it before a technician accepts it under <strong>My Repair Tickets</strong>.</p>
           <p id="created-ticket-media-note" class="text-xs text-emerald-800"></p>
         </div>
       </section>
@@ -198,11 +215,34 @@
       "audio/mpeg", "audio/mp4", "audio/webm", "audio/ogg", "audio/wav"
     ]);
 
+    function escapeHtml(str) {
+      return String(str ?? "")
+        .replace(/&/g, "&amp;")
+        .replace(/</g, "&lt;")
+        .replace(/>/g, "&gt;")
+        .replace(/"/g, "&quot;");
+    }
+
     function normalizeBDPhone(raw) {
       const digits = raw.replace(/\D/g, "");
       if (digits.startsWith("880") && digits.length === 13) return "0" + digits.slice(3);
       return digits;
     }
+
+    // Toggle address field when At Customer Location is selected
+    const serviceLocationEl = document.getElementById("service_location");
+    const serviceAddressWrap = document.getElementById("service-address-wrap");
+    const serviceAddressEl = document.getElementById("service_address");
+
+    function syncServiceLocationUI() {
+      const isAtCustomer = serviceLocationEl.value === "At Customer Location";
+      serviceAddressWrap.classList.toggle("hidden", !isAtCustomer);
+      serviceAddressEl.required = isAtCustomer;
+      if (!isAtCustomer) serviceAddressEl.value = "";
+    }
+
+    serviceLocationEl.addEventListener("change", syncServiceLocationUI);
+    syncServiceLocationUI();
 
     // Auth tab switching
     const authTabLogin = document.getElementById("auth-tab-login");
@@ -371,7 +411,7 @@
         .map(
           (f, idx) => `
           <div class="flex items-center justify-between text-xs bg-slate-50 border border-slate-200 rounded-lg px-3 py-1.5">
-            <span class="truncate pr-2">${f.name} (${(f.size / (1024 * 1024)).toFixed(1)} MB)</span>
+            <span class="truncate pr-2">${escapeHtml(f.name)} (${(f.size / (1024 * 1024)).toFixed(1)} MB)</span>
             <button type="button" data-remove-idx="${idx}" class="text-red-600 font-semibold hover:underline shrink-0">
               Remove
             </button>
@@ -475,11 +515,17 @@
       const phoneClean = normalizeBDPhone(document.getElementById("phone_number").value.trim());
       const deviceType = document.getElementById("device_type").value;
       const deviceModel = document.getElementById("device_model").value.trim();
+      const serviceLocation = serviceLocationEl.value;
+      const serviceAddress = serviceAddressEl.value.trim();
       const issueDesc = document.getElementById("issue_description").value.trim();
       const files = [...selectedFiles];
 
       if (!/^01[3-9]\d{8}$/.test(phoneClean)) {
         return showError("Enter a valid 11-digit Bangladeshi mobile number (e.g., 01712345678).");
+      }
+
+      if (serviceLocation === "At Customer Location" && !serviceAddress) {
+        return showError("Please enter your address or area for on-site repair or servicing.");
       }
 
       const fileErr = validateFiles(files);
@@ -497,6 +543,8 @@
             phone_number: phoneClean,
             device_type: deviceType,
             device_model: deviceModel,
+            service_location: serviceLocation,
+            service_address: serviceLocation === "At Customer Location" ? serviceAddress : null,
             issue_description: issueDesc
           })
           .select("id, ticket_code")
@@ -533,6 +581,8 @@
         document.getElementById("device_type").value = "";
         document.getElementById("device_model").value = "";
         document.getElementById("issue_description").value = "";
+        serviceLocationEl.value = "Drop-off at Shop";
+        syncServiceLocationUI();
         selectedFiles = [];
         renderQueuedFiles();
       } catch (err) {
@@ -542,6 +592,11 @@
         submitBtn.textContent = "Submit Repair Request";
       }
     });
+
+    function canCustomerCancel(ticket) {
+      const hasNotes = Boolean(ticket.technician_notes && ticket.technician_notes.trim().length > 0);
+      return ticket.status === "Pending" && ticket.estimated_cost_bdt == null && !hasNotes;
+    }
 
     // Load customer's own tickets
     async function loadMyTickets() {
@@ -554,7 +609,7 @@
         .order("created_at", { ascending: false });
 
       if (error) {
-        listEl.innerHTML = `<p class="text-sm text-red-600">Error: ${error.message}</p>`;
+        listEl.innerHTML = `<p class="text-sm text-red-600">Error: ${escapeHtml(error.message)}</p>`;
         return;
       }
 
@@ -563,32 +618,96 @@
         return;
       }
 
-      listEl.innerHTML = tickets.map((t) => {
+      listEl.innerHTML = "";
+      for (const t of tickets) {
         const costText = t.estimated_cost_bdt != null
           ? `৳${Number(t.estimated_cost_bdt).toLocaleString("en-BD")}`
           : "Pending diagnosis";
+
+        const locationLabel = t.service_location === "At Customer Location"
+          ? `At Your Location (${escapeHtml(t.service_address || "Address not specified")})`
+          : "Drop-off at Shop";
+
         const notesHtml = t.technician_notes
-          ? `<p class="text-xs bg-slate-50 border border-slate-200 rounded-lg p-2.5 text-slate-700"><span class="font-semibold">Technician Note:</span> ${t.technician_notes}</p>`
+          ? `<p class="text-xs bg-slate-50 border border-slate-200 rounded-lg p-2.5 text-slate-700"><span class="font-semibold">Technician Note:</span> ${escapeHtml(t.technician_notes)}</p>`
           : "";
 
-        return `
-          <div class="bg-white border border-slate-200 rounded-2xl p-5 shadow-sm space-y-2">
-            <div class="flex flex-wrap items-center justify-between gap-2">
-              <div>
-                <span class="font-mono font-bold text-blue-700">${t.ticket_code}</span>
-                <span class="ml-2 font-semibold text-sm">${t.device_type} — ${t.device_model}</span>
+        const allowCancel = canCustomerCancel(t);
+        const cancelBlockHtml = allowCancel
+          ? `
+            <div class="flex flex-wrap items-center justify-between gap-2 pt-3 border-t border-slate-100">
+              <span class="text-xs text-slate-500">Not yet accepted — you can cancel and delete this token and its files.</span>
+              <div class="flex items-center gap-2">
+                <span data-role="cancel-msg" class="text-xs text-red-600"></span>
+                <button type="button" data-role="cancel-btn"
+                  class="px-3 py-1.5 rounded-lg border border-red-200 bg-red-50 hover:bg-red-100 text-red-700 text-xs font-semibold">
+                  Cancel & Delete Ticket
+                </button>
               </div>
-              <span class="px-2.5 py-0.5 rounded-full text-xs font-semibold bg-blue-100 text-blue-800">${t.status}</span>
             </div>
-            <p class="text-sm text-slate-600">${t.issue_description}</p>
-            ${notesHtml}
-            <div class="flex flex-wrap items-center justify-between text-xs text-slate-500 pt-2 border-t border-slate-100">
-              <span>Estimated Cost: <strong class="text-slate-800">${costText}</strong></span>
-              <span>Submitted: ${new Date(t.created_at).toLocaleDateString("en-BD")}</span>
+          `
+          : "";
+
+        const card = document.createElement("div");
+        card.className = "bg-white border border-slate-200 rounded-2xl p-5 shadow-sm space-y-2";
+        card.innerHTML = `
+          <div class="flex flex-wrap items-center justify-between gap-2">
+            <div>
+              <span class="font-mono font-bold text-blue-700">${escapeHtml(t.ticket_code)}</span>
+              <span class="ml-2 font-semibold text-sm">${escapeHtml(t.device_type)} — ${escapeHtml(t.device_model)}</span>
             </div>
+            <span class="px-2.5 py-0.5 rounded-full text-xs font-semibold bg-blue-100 text-blue-800">${escapeHtml(t.status)}</span>
           </div>
+          <p class="text-xs text-slate-600"><span class="font-semibold">Service Location:</span> ${locationLabel}</p>
+          <p class="text-sm text-slate-600">${escapeHtml(t.issue_description)}</p>
+          ${notesHtml}
+          <div class="flex flex-wrap items-center justify-between text-xs text-slate-500 pt-2 border-t border-slate-100">
+            <span>Estimated Cost: <strong class="text-slate-800">${costText}</strong></span>
+            <span>Submitted: ${new Date(t.created_at).toLocaleDateString("en-BD")}</span>
+          </div>
+          ${cancelBlockHtml}
         `;
-      }).join("");
+
+        const cancelBtn = card.querySelector('[data-role="cancel-btn"]');
+        if (cancelBtn) {
+          cancelBtn.addEventListener("click", async () => {
+            const msgEl = card.querySelector('[data-role="cancel-msg"]');
+            if (!confirm(`Cancel ticket ${t.ticket_code} and permanently delete the ticket and any uploaded files?`)) {
+              return;
+            }
+
+            cancelBtn.disabled = true;
+            msgEl.textContent = "Deleting...";
+
+            const filePaths = (Array.isArray(t.media_paths) ? t.media_paths : [])
+              .map((m) => m.path)
+              .filter(Boolean);
+
+            if (filePaths.length > 0) {
+              const { error: rmErr } = await db.storage.from("repair-media").remove(filePaths);
+              if (rmErr) {
+                cancelBtn.disabled = false;
+                msgEl.textContent = `Could not delete files: ${rmErr.message}`;
+                return;
+              }
+            }
+
+            const { error: delErr } = await db.from("tickets").delete().eq("id", t.id);
+            if (delErr) {
+              cancelBtn.disabled = false;
+              msgEl.textContent = "Could not cancel ticket (it may already be accepted or updated).";
+              return;
+            }
+
+            card.remove();
+            if (!listEl.children.length) {
+              listEl.innerHTML = `<div class="bg-white border border-slate-200 rounded-2xl p-6 text-sm text-slate-500">You haven't submitted any repair requests yet.</div>`;
+            }
+          });
+        }
+
+        listEl.appendChild(card);
+      }
     }
   </script>
 </body>
