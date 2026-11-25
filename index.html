@@ -133,7 +133,6 @@
             </div>
           </div>
 
-          <!-- Service Location Option -->
           <div class="space-y-3 bg-slate-50 border border-slate-200 rounded-xl p-4">
             <div>
               <label class="block text-sm font-medium mb-1">Where Should Repair / Servicing Happen? *</label>
@@ -215,6 +214,14 @@
       "audio/mpeg", "audio/mp4", "audio/webm", "audio/ogg", "audio/wav"
     ]);
 
+    const USER_CANCEL_REASONS = [
+      "Changed my mind",
+      "Found another repair option",
+      "Device started working",
+      "Submitted by mistake",
+      "Other"
+    ];
+
     function escapeHtml(str) {
       return String(str ?? "")
         .replace(/&/g, "&amp;")
@@ -229,7 +236,7 @@
       return digits;
     }
 
-    // Toggle address field when At Customer Location is selected
+    // Service location toggle
     const serviceLocationEl = document.getElementById("service_location");
     const serviceAddressWrap = document.getElementById("service-address-wrap");
     const serviceAddressEl = document.getElementById("service_address");
@@ -244,7 +251,7 @@
     serviceLocationEl.addEventListener("change", syncServiceLocationUI);
     syncServiceLocationUI();
 
-    // Auth tab switching
+    // Auth tabs
     const authTabLogin = document.getElementById("auth-tab-login");
     const authTabRegister = document.getElementById("auth-tab-register");
     const loginForm = document.getElementById("login-form");
@@ -270,10 +277,11 @@
       const errEl = document.getElementById("login-error");
       errEl.classList.add("hidden");
 
-      const email = document.getElementById("login-email").value.trim();
-      const password = document.getElementById("login-password").value;
+      const { error } = await db.auth.signInWithPassword({
+        email: document.getElementById("login-email").value.trim(),
+        password: document.getElementById("login-password").value
+      });
 
-      const { error } = await db.auth.signInWithPassword({ email, password });
       if (error) {
         errEl.textContent = error.message;
         errEl.classList.remove("hidden");
@@ -300,12 +308,7 @@
       const { error } = await db.auth.signUp({
         email,
         password,
-        options: {
-          data: {
-            full_name: fullName,
-            phone_number: phoneClean
-          }
-        }
+        options: { data: { full_name: fullName, phone_number: phoneClean } }
       });
 
       if (error) {
@@ -342,7 +345,7 @@
 
     document.getElementById("refresh-my-tickets").addEventListener("click", loadMyTickets);
 
-    // Auth state listener
+    // Auth listener
     db.auth.onAuthStateChange(async (_event, session) => {
       currentUser = session?.user ?? null;
 
@@ -371,7 +374,7 @@
       }
     });
 
-    // File validation, queue rendering, and image compression
+    // File queue & photo compression
     const fileInput = document.getElementById("media_files");
     const fileSummary = document.getElementById("file-summary");
     const errorBox = document.getElementById("submit-error");
@@ -433,14 +436,11 @@
       clearError();
       const newlyPicked = Array.from(fileInput.files);
       fileInput.value = "";
-
       if (!newlyPicked.length) return;
 
       const combined = [...selectedFiles, ...newlyPicked];
       const err = validateFiles(combined);
-      if (err) {
-        return showError(err);
-      }
+      if (err) return showError(err);
 
       selectedFiles = combined;
       renderQueuedFiles();
@@ -448,16 +448,13 @@
 
     function compressImageFile(file) {
       return new Promise((resolve) => {
-        if (!file.type.startsWith("image/")) {
-          return resolve(file);
-        }
+        if (!file.type.startsWith("image/")) return resolve(file);
 
         const img = new Image();
         const objectUrl = URL.createObjectURL(file);
 
         img.onload = () => {
           URL.revokeObjectURL(objectUrl);
-
           let { width, height } = img;
           if (width > MAX_IMAGE_DIM || height > MAX_IMAGE_DIM) {
             if (width >= height) {
@@ -472,21 +469,13 @@
           const canvas = document.createElement("canvas");
           canvas.width = width;
           canvas.height = height;
-
-          const ctx = canvas.getContext("2d");
-          ctx.drawImage(img, 0, 0, width, height);
+          canvas.getContext("2d").drawImage(img, 0, 0, width, height);
 
           canvas.toBlob(
             (blob) => {
-              if (!blob || blob.size >= file.size) {
-                return resolve(file);
-              }
+              if (!blob || blob.size >= file.size) return resolve(file);
               const baseName = file.name.replace(/\.[^.]+$/, "");
-              const compressed = new File([blob], `${baseName}.jpg`, {
-                type: "image/jpeg",
-                lastModified: Date.now()
-              });
-              resolve(compressed);
+              resolve(new File([blob], `${baseName}.jpg`, { type: "image/jpeg", lastModified: Date.now() }));
             },
             "image/jpeg",
             IMAGE_QUALITY
@@ -523,7 +512,6 @@
       if (!/^01[3-9]\d{8}$/.test(phoneClean)) {
         return showError("Enter a valid 11-digit Bangladeshi mobile number (e.g., 01712345678).");
       }
-
       if (serviceLocation === "At Customer Location" && !serviceAddress) {
         return showError("Please enter your address or area for on-site repair or servicing.");
       }
@@ -598,7 +586,12 @@
       return ticket.status === "Pending" && ticket.estimated_cost_bdt == null && !hasNotes;
     }
 
-    // Load customer's own tickets
+    function statusBadgeClass(status) {
+      if (status === "Cancelled") return "bg-red-100 text-red-800";
+      if (status === "Completed" || status === "Ready") return "bg-emerald-100 text-emerald-800";
+      return "bg-blue-100 text-blue-800";
+    }
+
     async function loadMyTickets() {
       const listEl = document.getElementById("my-tickets-list");
       listEl.innerHTML = `<p class="text-sm text-slate-500">Loading your repair requests...</p>`;
@@ -632,17 +625,29 @@
           ? `<p class="text-xs bg-slate-50 border border-slate-200 rounded-lg p-2.5 text-slate-700"><span class="font-semibold">Technician Note:</span> ${escapeHtml(t.technician_notes)}</p>`
           : "";
 
+        const cancelInfoHtml = t.status === "Cancelled"
+          ? `<p class="text-xs bg-red-50 border border-red-200 rounded-lg p-2.5 text-red-800"><span class="font-semibold">Cancelled (${escapeHtml(t.cancelled_by || "user")}):</span> ${escapeHtml(t.cancellation_reason || "No reason provided")}</p>`
+          : "";
+
+        const reasonOptions = USER_CANCEL_REASONS
+          .map((r) => `<option value="${escapeHtml(r)}">${escapeHtml(r)}</option>`)
+          .join("");
+
         const allowCancel = canCustomerCancel(t);
-        const cancelBlockHtml = allowCancel
+        const cancelPanelHtml = allowCancel
           ? `
-            <div class="flex flex-wrap items-center justify-between gap-2 pt-3 border-t border-slate-100">
-              <span class="text-xs text-slate-500">Not yet accepted — you can cancel and delete this token and its files.</span>
-              <div class="flex items-center gap-2">
-                <span data-role="cancel-msg" class="text-xs text-red-600"></span>
+            <div class="pt-3 border-t border-slate-100 space-y-2">
+              <p class="text-xs text-slate-500">Not yet accepted — you can cancel this request. Attached files will be deleted to save storage.</p>
+              <div class="flex flex-wrap items-center gap-2">
+                <select data-role="cancel-reason" class="rounded-lg border border-slate-300 px-2.5 py-1.5 text-xs bg-white">
+                  <option value="">Select reason to cancel...</option>
+                  ${reasonOptions}
+                </select>
                 <button type="button" data-role="cancel-btn"
                   class="px-3 py-1.5 rounded-lg border border-red-200 bg-red-50 hover:bg-red-100 text-red-700 text-xs font-semibold">
-                  Cancel & Delete Ticket
+                  Cancel Request
                 </button>
+                <span data-role="cancel-msg" class="text-xs text-red-600"></span>
               </div>
             </div>
           `
@@ -656,28 +661,36 @@
               <span class="font-mono font-bold text-blue-700">${escapeHtml(t.ticket_code)}</span>
               <span class="ml-2 font-semibold text-sm">${escapeHtml(t.device_type)} — ${escapeHtml(t.device_model)}</span>
             </div>
-            <span class="px-2.5 py-0.5 rounded-full text-xs font-semibold bg-blue-100 text-blue-800">${escapeHtml(t.status)}</span>
+            <span class="px-2.5 py-0.5 rounded-full text-xs font-semibold ${statusBadgeClass(t.status)}">${escapeHtml(t.status)}</span>
           </div>
           <p class="text-xs text-slate-600"><span class="font-semibold">Service Location:</span> ${locationLabel}</p>
           <p class="text-sm text-slate-600">${escapeHtml(t.issue_description)}</p>
           ${notesHtml}
+          ${cancelInfoHtml}
           <div class="flex flex-wrap items-center justify-between text-xs text-slate-500 pt-2 border-t border-slate-100">
             <span>Estimated Cost: <strong class="text-slate-800">${costText}</strong></span>
             <span>Submitted: ${new Date(t.created_at).toLocaleDateString("en-BD")}</span>
           </div>
-          ${cancelBlockHtml}
+          ${cancelPanelHtml}
         `;
 
         const cancelBtn = card.querySelector('[data-role="cancel-btn"]');
         if (cancelBtn) {
           cancelBtn.addEventListener("click", async () => {
+            const reasonSel = card.querySelector('[data-role="cancel-reason"]');
             const msgEl = card.querySelector('[data-role="cancel-msg"]');
-            if (!confirm(`Cancel ticket ${t.ticket_code} and permanently delete the ticket and any uploaded files?`)) {
+            const reason = reasonSel.value;
+
+            if (!reason) {
+              msgEl.textContent = "Please choose a cancellation reason first.";
+              return;
+            }
+            if (!confirm(`Cancel ticket ${t.ticket_code} ("${reason}") and delete attached media files?`)) {
               return;
             }
 
             cancelBtn.disabled = true;
-            msgEl.textContent = "Deleting...";
+            msgEl.textContent = "Cancelling...";
 
             const filePaths = (Array.isArray(t.media_paths) ? t.media_paths : [])
               .map((m) => m.path)
@@ -692,17 +705,24 @@
               }
             }
 
-            const { error: delErr } = await db.from("tickets").delete().eq("id", t.id);
-            if (delErr) {
+            const { error: upErr } = await db
+              .from("tickets")
+              .update({
+                status: "Cancelled",
+                cancellation_reason: reason,
+                cancelled_by: "user",
+                cancelled_at: new Date().toISOString(),
+                media_paths: []
+              })
+              .eq("id", t.id);
+
+            if (upErr) {
               cancelBtn.disabled = false;
-              msgEl.textContent = "Could not cancel ticket (it may already be accepted or updated).";
+              msgEl.textContent = "Could not cancel (ticket may already be accepted or updated).";
               return;
             }
 
-            card.remove();
-            if (!listEl.children.length) {
-              listEl.innerHTML = `<div class="bg-white border border-slate-200 rounded-2xl p-6 text-sm text-slate-500">You haven't submitted any repair requests yet.</div>`;
-            }
+            loadMyTickets();
           });
         }
 
